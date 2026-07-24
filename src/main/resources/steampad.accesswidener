@@ -1,0 +1,20 @@
+accessWidener v2 named
+
+# Mouse.onMouseButton is private — widen so VirtualMouseController/ActionExecutor can call it.
+# Signature changed in MC 1.21.10: now takes a MouseInput record instead of (int button, int action, int mods).
+accessible method net/minecraft/client/Mouse onMouseButton (JLnet/minecraft/client/input/MouseInput;I)V
+# Mouse.onCursorPos is private in MC 1.21.10 — widen so VirtualMouseController can move the virtual cursor.
+accessible method net/minecraft/client/Mouse onCursorPos (JDD)V
+# Keyboard.onKey / onChar are private — widened so VirtualKeyboard can route synthetic typing through
+# the real methods instead of calling Screen.keyPressed/charTyped directly. Mods built on Architectury
+# API (e.g. Roughly Enough Items) intercept input via @WrapOperation mixins on the Screen.mouseClicked/
+# keyPressed/charTyped CALL SITES inside Mouse.onMouseButton/Keyboard.onKey/onChar — a direct call to
+# the Screen method from elsewhere in the codebase never reaches those call sites, so those mods never
+# see synthetic input from the virtual mouse/keyboard. Routing through the real methods fixes that for
+# REI and any other Architectury-based mod, not just REI specifically (feedback: "no es integrarlo, es
+# interactuar con el").
+accessible method net/minecraft/client/Keyboard onKey (JILnet/minecraft/client/input/KeyInput;)V
+accessible method net/minecraft/client/Keyboard onChar (JLnet/minecraft/client/input/CharInput;)V
+# BossBarHud.bossBars is package-private — widen so HapticsController can check whether a nearby
+# entity has an active boss bar (boss detection: entity UUID present as a boss-bar key).
+accessible field net/minecraft/client/gui/hud/BossBarHud bossBars Ljava/util/Map;

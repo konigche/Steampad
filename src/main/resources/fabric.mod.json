@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "steampad",
+  "version": "${version}",
+  "name": "SteamPad",
+  "description": "Native Steam Input integration for Minecraft with controller selection, radial menu, gyro, haptics and full gamepad UI navigation.",
+  "authors": [
+    "SteamPad Contributors"
+  ],
+  "contact": {
+    "sources": "https://github.com/steampad/steampad-mod"
+  },
+  "license": "MIT",
+  "icon": "assets/steampad/textures/gui/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "dev.steampad.SteamPadMod"
+    ],
+    "client": [
+      "dev.steampad.client.SteamPadClient"
+    ],
+    "modmenu": [
+      "dev.steampad.compat.ModMenuApiImpl"
+    ]
+  },
+  "mixins": [
+    "steampad.mixins.json"
+  ],
+  "accessWidener": "steampad.accesswidener",
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "~1.21.4",
+    "java": ">=21"
+  },
+  "suggests": {
+    "cloth-config": "*",
+    "malilib": "*"
+  },
+  "custom": {
+    "modmenu:badges": [
+      "library"
+    ]
+  }
+}

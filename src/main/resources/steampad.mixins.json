@@ -1,0 +1,28 @@
+{
+  "required": true,
+  "package": "dev.steampad.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MinecraftClientMixin",
+    "ChatHudMixin",
+    "ChatScreenMixin",
+    "ClientPlayerInteractionManagerMixin",
+    "ClientPlayNetworkHandlerMixin",
+    "GameRendererMixin",
+    "HandledScreenAccessor",
+    "KeyboardInputMixin",
+    "MouseMixin",
+    "OptionsScreenMixin",
+    "PlayerEntityModelMixin",
+    "PlayerEntityRenderStateMixin",
+    "PlayerEntityRendererMixin",
+    "ScreenMixin",
+    "ThirdPersonCameraMixin",
+    "ThirdPersonCrosshairMixin",
+    "ThirdPersonPickMixin",
+    "WindowAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

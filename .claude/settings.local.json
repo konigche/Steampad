@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-21.0.9.10-hotspot\"; & \"C:\\\\Users\\\\RChe\\\\.gradle\\\\wrapper\\\\dists\\\\gradle-8.14-bin\\\\38aieal9i53h9rfe7vjup95b9\\\\gradle-8.14\\\\bin\\\\gradle.bat\" build --no-daemon -x test 2>&1 | Select-String -Pattern \"error:|BUILD|\\\\.java:\" | Select-Object -First 20; Get-ChildItem \"C:\\\\Dev\\\\Steampad\\\\dist\\\\steampad-0.6.0.jar\" | Select-Object Name,@{N='MB';E={[math]::Round\\($_.Length/1MB,2\\)}})",
+      "Bash(unzip -l dist/steampad-0.6.0.jar)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-21.0.9.10-hotspot\"; & \"C:\\\\Users\\\\RChe\\\\.gradle\\\\wrapper\\\\dists\\\\gradle-8.14-bin\\\\38aieal9i53h9rfe7vjup95b9\\\\gradle-8.14\\\\bin\\\\gradle.bat\" build --no-daemon -x test 2>&1 | Select-String -Pattern \"error:|BUILD\" | Select-Object -First 5; Get-ChildItem \"C:\\\\Dev\\\\Steampad\\\\dist\\\\steampad-0.6.0.jar\" | Select-Object Name,@{N='MB';E={[math]::Round\\($_.Length/1MB,2\\)}},LastWriteTime)",
+      "Bash(export JAVA_HOME=\"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-21.0.9.10-hotspot\")",
+      "Bash(\"C:\\\\Users\\\\RChe\\\\.gradle\\\\wrapper\\\\dists\\\\gradle-8.14-bin\\\\38aieal9i53h9rfe7vjup95b9\\\\gradle-8.14\\\\bin\\\\gradle.bat\" -p C:\\\\\\\\Dev\\\\\\\\Steampad build --no-daemon)",
+      "Bash(\"C:\\\\Users\\\\RChe\\\\.gradle\\\\wrapper\\\\dists\\\\gradle-8.14-bin\\\\38aieal9i53h9rfe7vjup95b9\\\\gradle-8.14\\\\bin\\\\gradle.bat\" -p C:/Dev/Steampad build --no-daemon)",
+      "Bash(\"C:\\\\Users\\\\RChe\\\\.gradle\\\\wrapper\\\\dists\\\\gradle-8.14-bin\\\\38aieal9i53h9rfe7vjup95b9\\\\gradle-8.14\\\\bin\\\\gradle.bat\" -p C:/Dev/Steampad test --no-daemon)",
+      "Bash(grep -h \"tests=\" \"C:/Users/RChe/.gradle/controlify-build/steampad/_/test-results/test/\"*.xml 2>/dev/null | sed 's/.*name=\"\\\\\\([^\"]*\\\\\\)\" tests=\"\\\\\\([0-9]*\\\\\\)\" skipped=\"\\\\\\([0-9]*\\\\\\)\" failures=\"\\\\\\([0-9]*\\\\\\)\" errors=\"\\\\\\([0-9]*\\\\\\)\".*/\\\\1: \\\\2 tests, \\\\4 failures, \\\\5 errors/' )",
+      "Bash(unzip -l \"C:/Dev/Steampad/dist/steampad-0.10.0.jar\")",
+      "Bash(unzip -p \"C:/Dev/Steampad/dist/steampad-0.10.0.jar\" fabric.mod.json)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)",
+      "PowerShell(uv tool install graphify)"
+    ]
+  }
+}

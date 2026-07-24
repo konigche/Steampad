@@ -1,0 +1,112 @@
+plugins {
+    id 'fabric-loom' version '1.9-SNAPSHOT'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://maven.shedaniel.me/" }
+    maven { url = "https://maven.terraformersmc.com/releases" }
+    maven {
+        name = "JitPack"
+        url = "https://jitpack.io"
+    }
+}
+
+loom {
+    // No split source sets — all code in src/main/java, client-only via @Environment annotation
+    accessWidenerPath = file("src/main/resources/steampad.accesswidener")
+    mods {
+        "steampad" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+configurations {
+    include
+    implementation.extendsFrom include
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Cloth Config — config UI library
+    modCompileOnly "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}"
+
+    // Mod Menu — optional integration (compile-only; only loaded when modmenu mod is present)
+    modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+
+    // Steamworks4j — Steam Input API binding
+    // Bundled in the mod JAR via 'include'
+    include(implementation("com.code-disaster.steamworks4j:steamworks4j:${project.steamworks4j_version}") {
+        transitive = false
+    })
+
+    // Test dependencies
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.11.0'
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+jar {
+    if (file("LICENSE").exists()) {
+        from("LICENSE") {
+            rename { "${it}_${project.archives_base_name}" }
+        }
+    }
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+    }
+    // Tests don't have Fabric/MC environment — exclude MC-dependent tests from unit run
+    exclude '**/mixin/**'
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            name = "local"
+            url = uri("${layout.buildDirectory.get()}/repo")
+        }
+    }
+}

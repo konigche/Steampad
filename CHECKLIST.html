@@ -1,0 +1,671 @@
+<title>SteamPad — Checklist de Validación</title>
+<style>
+  :root{
+    --bg:#eef1f0; --surface:#ffffff; --surface-2:#e4e8e6; --border:#cdd3d1;
+    --text:#1a1d1f; --text-muted:#5b6462;
+    --accent:#a8632a; --accent-soft:#f0dcc4;
+    --ok:#2f7d63; --ok-bg:#e0f0ea;
+    --warn:#a67a1e; --warn-bg:#fbf0da;
+    --danger:#a8433a; --danger-bg:#f8e2df;
+    --font-display:"Segoe UI Semibold","Segoe UI",system-ui,-apple-system,sans-serif;
+    --font-body:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --font-mono:ui-monospace,"Cascadia Code","Consolas","SFMono-Regular",monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#12161b; --surface:#1a2028; --surface-2:#212933; --border:#313b46;
+      --text:#e8e6e1; --text-muted:#9aa3ab;
+      --accent:#d3903f; --accent-soft:#3a2c1a;
+      --ok:#4fb08b; --ok-bg:#16302a;
+      --warn:#d1a13a; --warn-bg:#332a15;
+      --danger:#d1695d; --danger-bg:#33201d;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161b; --surface:#1a2028; --surface-2:#212933; --border:#313b46;
+    --text:#e8e6e1; --text-muted:#9aa3ab;
+    --accent:#d3903f; --accent-soft:#3a2c1a;
+    --ok:#4fb08b; --ok-bg:#16302a;
+    --warn:#d1a13a; --warn-bg:#332a15;
+    --danger:#d1695d; --danger-bg:#33201d;
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f0; --surface:#ffffff; --surface-2:#e4e8e6; --border:#cdd3d1;
+    --text:#1a1d1f; --text-muted:#5b6462;
+    --accent:#a8632a; --accent-soft:#f0dcc4;
+    --ok:#2f7d63; --ok-bg:#e0f0ea;
+    --warn:#a67a1e; --warn-bg:#fbf0da;
+    --danger:#a8433a; --danger-bg:#f8e2df;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font-body); line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap{ max-width:860px; margin:0 auto; padding:28px 20px 80px; }
+  header.top{ position:sticky; top:0; z-index:10; background:color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:16px 20px; }
+  header.top .inner{ max-width:860px; margin:0 auto; }
+  .eyebrow{ font-family:var(--font-display); font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); margin:0 0 4px; }
+  h1{ font-family:var(--font-display); font-size:22px; font-weight:700; margin:0 0 10px; letter-spacing:-.01em; text-wrap:balance; }
+  .progress-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .bar{ flex:1; min-width:120px; height:8px; border-radius:99px; background:var(--surface-2); overflow:hidden; border:1px solid var(--border); display:flex; }
+  .bar-seg-ok{ height:100%; background:var(--ok); }
+  .bar-seg-fail{ height:100%; background:var(--danger); }
+  .count{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--text-muted); white-space:nowrap; }
+  .count b.ok{ color:var(--ok); } .count b.fail{ color:var(--danger); }
+  .header-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  button.pillbtn{ font-family:var(--font-body); font-size:12px; border-radius:6px; padding:4px 12px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--text); }
+  button.pillbtn.primary{ background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:600; }
+  button.pillbtn:hover{ filter:brightness(1.08); }
+  button:focus-visible, summary:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .intro{ font-size:13.5px; color:var(--text-muted); max-width:66ch; margin:16px 0 24px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+  .intro code{ font-family:var(--font-mono); font-size:12px; background:var(--surface-2); padding:1px 5px; border-radius:4px; }
+  .backlog{ background:var(--surface); border:1px solid var(--warn); border-radius:8px; padding:12px 14px; margin-bottom:20px; }
+  .backlog summary{ padding:0; cursor:pointer; display:flex; align-items:center; gap:8px; list-style:none; }
+  .backlog summary::-webkit-details-marker{ display:none; }
+  .backlog-title{ font-family:var(--font-display); font-weight:700; font-size:13.5px; color:var(--warn); }
+  .backlog-count{ font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); }
+  .backlog ul{ list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .backlog li{ font-size:12.5px; line-height:1.5; padding-left:14px; border-left:2px solid var(--border); }
+  .backlog li b{ display:block; font-size:13px; color:var(--text); margin-bottom:2px; }
+  .backlog li .why{ color:var(--text-muted); }
+  .backlog li .status{ display:inline-block; font-family:var(--font-mono); font-size:10px; padding:1px 6px; border-radius:4px; margin-left:6px; vertical-align:1px; }
+  .backlog li .status.blocked{ background:var(--danger-bg); color:var(--danger); }
+  .backlog li .status.deferred{ background:var(--warn-bg); color:var(--warn); }
+  .backlog li .status.rejected{ background:var(--surface-2); color:var(--text-muted); }
+  details.section{ background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:12px; overflow:hidden; }
+  details.section[open] summary{ border-bottom:1px solid var(--border); }
+  summary{ list-style:none; cursor:pointer; padding:14px 16px; display:flex; align-items:center; gap:10px; justify-content:space-between; }
+  summary::-webkit-details-marker{ display:none; }
+  .sec-title{ display:flex; align-items:baseline; gap:10px; min-width:0; flex-wrap:wrap; }
+  .sec-name{ font-family:var(--font-display); font-weight:700; font-size:15px; white-space:nowrap; }
+  .sec-ver{ font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); white-space:nowrap; }
+  .sec-right{ display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .chevron{ transition:transform .2s ease; color:var(--text-muted); font-size:12px; }
+  details[open] .chevron{ transform:rotate(90deg); }
+  .sec-count{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-size:11.5px; color:var(--text-muted); }
+  .sec-count.done{ color:var(--ok); }
+  ul.items{ list-style:none; margin:0; padding:6px; }
+  li.item{ display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:6px; border-left:3px solid transparent; }
+  li.item:hover{ background:var(--surface-2); }
+  li.item.risk-alto{ border-left-color:var(--danger); }
+  li.item.risk-medio{ border-left-color:var(--warn); }
+  li.item.risk-bajo{ border-left-color:var(--ok); }
+  .item-row{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .item-text{ min-width:0; }
+  .item-claim{ font-size:14px; font-weight:600; }
+  .item-detail{ font-size:12.5px; color:var(--text-muted); margin-top:2px; }
+  .fixed-tag{ display:inline-block; font-family:var(--font-mono); font-size:10px; background:var(--ok-bg); color:var(--ok); padding:1px 6px; border-radius:4px; margin-left:6px; vertical-align:1px; }
+  .clave-tag{ display:inline-block; font-family:var(--font-display); font-size:9.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; background:var(--accent-soft); color:var(--accent); padding:1px 6px; border-radius:4px; margin-right:6px; vertical-align:1px; }
+  code.k{ font-family:var(--font-mono); font-size:11.5px; background:var(--surface-2); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere; }
+  .tristate{ display:flex; gap:4px; flex-shrink:0; }
+  .tristate button{ font-family:var(--font-body); font-size:11px; font-weight:600; padding:4px 9px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); color:var(--text-muted); cursor:pointer; white-space:nowrap; }
+  .tristate button[data-state="untested"].active{ background:var(--surface-2); color:var(--text); border-color:var(--text-muted); }
+  .tristate button[data-state="failed"].active{ background:var(--danger-bg); color:var(--danger); border-color:var(--danger); }
+  .tristate button[data-state="confirmed"].active{ background:var(--ok-bg); color:var(--ok); border-color:var(--ok); }
+  .note-row{ margin-top:0; }
+  .note-toggle{ font-family:var(--font-body); font-size:11.5px; color:var(--text-muted); background:none; border:none; padding:2px 0; cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
+  .note-toggle:hover{ color:var(--accent); }
+  .note-toggle.has-note{ color:var(--accent); font-weight:600; }
+  textarea.note-box{ display:none; width:100%; margin-top:6px; font-family:var(--font-body); font-size:13px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:8px; resize:vertical; min-height:44px; }
+  textarea.note-box.open{ display:block; }
+  .modal-backdrop{ position:fixed; inset:0; background:rgba(10,12,14,.55); display:none; align-items:center; justify-content:center; padding:20px; z-index:100; }
+  .modal-backdrop.open{ display:flex; }
+  .modal{ background:var(--surface); border:1px solid var(--border); border-radius:12px; max-width:640px; width:100%; max-height:82vh; display:flex; flex-direction:column; padding:18px; gap:10px; box-shadow:0 20px 60px rgba(0,0,0,.35); }
+  .modal h2{ font-family:var(--font-display); font-size:16px; margin:0; }
+  .modal .status{ font-size:12.5px; color:var(--text-muted); margin:0; }
+  .modal .status.ok{ color:var(--ok); }
+  textarea.report-box{ flex:1; min-height:280px; font-family:var(--font-mono); font-size:12px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px; resize:vertical; white-space:pre; overflow:auto; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; }
+  footer{ text-align:center; font-size:12px; color:var(--text-muted); margin-top:28px; }
+  @media (prefers-reduced-motion: reduce){ .chevron{ transition:none; } }
+</style>
+
+<header class="top">
+  <div class="inner">
+    <p class="eyebrow">SteamPad · Banco de pruebas de hardware</p>
+    <h1 id="mainTitle">Checklist de validación</h1>
+    <div class="progress-row">
+      <div class="bar"><div class="bar-seg-ok" id="barOk"></div><div class="bar-seg-fail" id="barFail"></div></div>
+      <span class="count" id="countLabel">0 / 0</span>
+    </div>
+    <div class="header-actions">
+      <button class="pillbtn primary" id="exportBtn" type="button">Exportar reporte</button>
+      <button class="pillbtn" id="resetBtn" type="button">Reiniciar estados</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <p class="intro" id="introText"></p>
+  <div id="backlogBox"></div>
+  <div id="sections"></div>
+  <footer id="footerText"></footer>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle">Reporte de validación</h2>
+    <p class="status" id="modalStatus">Selecciona el texto y cópialo (Ctrl+C) para pegarlo en el chat.</p>
+    <textarea class="report-box" id="reportBox" readonly></textarea>
+    <div class="modal-actions">
+      <button class="pillbtn" id="modalCopyBtn" type="button">Copiar al portapapeles</button>
+      <button class="pillbtn primary" id="modalCloseBtn" type="button">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================================================
+ * ÚNICA FUENTE DE DATOS. Para actualizar el checklist: edita este array (agrega/quita/cambia
+ * objetos), nunca el HTML/CSS de abajo. Cada objeto es una edición barata y aislada.
+ *
+ * Campos: id (estable, no cambiar entre rondas), section (agrupa y ordena), ver (dónde vive el
+ * código vigente), risk ('bajo'|'medio'|'alto'), clave (bool, resalta como prueba crítica),
+ * text (afirmación corta), detail (una línea de contexto), fixedIn (opcional, "v0.51.0" si se
+ * tocó código esta ronda), default ('untested'|'failed'|'confirmed' — estado de partida).
+ * ========================================================================================== */
+const META = {
+  title: "SteamPad — Checklist de validación (FASE 79, v0.61.0)",
+  generated: "2026-07-17",
+  intro: "Construido contra <code>dist/steampad-0.58.0.jar</code> (acumulativo). El panel amarillo de " +
+    "abajo es de solo lectura — todo lo que NO está implementado todavía, para entrar en contexto en " +
+    "10 segundos sin abrir TASKS.md. Las secciones de prueba totalmente confirmadas empiezan " +
+    "colapsadas — lo que ves abierto es lo que falta probar. Marca cada punto al probarlo; usa " +
+    "\"Exportar reporte\" y pégamelo en el chat cuando quieras que actualice la documentación del " +
+    "proyecto con los resultados reales.",
+  footer: "SteamPad · sincronizado con TASKS.md / TODO_BLOCKERS.md / DECISIONS.md · última ronda: 2026-07-17"
+};
+
+const ITEMS = [
+  // ---- Steam Input (Game Mode) ----
+  {id:'si-1', section:'Steam Input (Game Mode)', ver:'v0.44.0 · B076', risk:'medio',
+   text:'Log de arranque en escritorio',
+   detail:'Debe aparecer "Removed SteamPad IGA manifest" y "Steam natives loaded OK".', default:'untested'},
+  {id:'si-2', section:'Steam Input (Game Mode)', ver:'v0.44.0 · B076', risk:'medio', clave:true,
+   text:'Detección en Game Mode tras reiniciar Steam',
+   detail:'Los pads deben volver a detectarse vía el gamepad virtual de Steam.', default:'untested'},
+  {id:'si-3', section:'Steam Input (Game Mode)', ver:'v0.44.0 · B076', risk:'medio',
+   text:'Sin lag en teclado virtual ni gameplay',
+   detail:'Si hay lag, buscar "Tick profile (" en el log.', default:'confirmed'},
+  {id:'si-4', section:'Steam Input (Game Mode)', ver:'v0.44.0 · B076', risk:'medio',
+   text:'Paddles por la ruta vigente',
+   detail:'Mapear paddle -> F13..F22 en Steam + asignar la ranura en Botones.', default:'untested'},
+
+  // ---- Sistema de Emotes ----
+  {id:'em-1', section:'Sistema de Emotes', ver:'v0.50.0 → v0.60.0', risk:'bajo',
+   text:'.emotecraft: los 21 archivos reales cargan (parser completo v1–v4) — CONFIRMASTE "aparecen todos los 21"',
+   detail:'Confirmado por ti tras probar v0.59.0 ("Parece que ahora si aparecen todos los 21 archivos que buen trabajo"). En v0.60.0 se corrigió además una colisión de keyframes específica de "Friendship Round Dance" (ver em-4) que no afecta la CARGA del archivo, solo su animación.',
+   fixedIn:'v0.59.0 (D099) confirmado en hardware', default:'confirmed'},
+  {id:'em-2', section:'Sistema de Emotes', ver:'v0.50.0', risk:'bajo',
+   text:'Íconos reales por emote', detail:'Confirmado funcionando (letra fija reemplazada por el ícono real extraído del archivo).', default:'confirmed'},
+  {id:'em-13', section:'Sistema de Emotes', ver:'v0.54.0 → v0.60.0', risk:'bajo',
+   text:'Biblioteca: TODAS las celdas con tu personaje congelado + la enfocada MÁS GRANDE y animando — CONFIRMASTE que "quedó perfecto"',
+   detail:'Confirmado por ti tras probar v0.59.0. En v0.60.0 el tamaño de la celda enfocada se agrandó aún más (pediste "hazlo aun más grande") — confirma que ahora destaca claramente más.',
+   fixedIn:'v0.59.0 (D099/B092) confirmado + v0.60.0 (D100) tamaño aumentado', default:'confirmed'},
+  {id:'em-14', section:'Sistema de Emotes', ver:'v0.54.0', risk:'medio',
+   text:'Preview "AAA": sin pisar un emote real en curso',
+   detail:'Si presionas "▶" para reproducir un emote de verdad mientras navegas la lista, esa fila debe seguir mostrando SU animación real sin interrupción, sin importar por dónde muevas el foco después.',
+   fixedIn:'v0.54.0', default:'untested'},
+  {id:'em-15', section:'Sistema de Emotes', ver:'v0.54.0', risk:'bajo',
+   text:'Vibración de la Rueda de Emotes al cambiar de selección',
+   detail:'Confirmado en el código: la Rueda de Emotes ya usa el mismo pulso de vibración que el menú radial normal al cambiar de selección (mismo mecanismo, no es una función nueva). Confírmalo al sentirlo en el juego.', default:'untested'},
+  {id:'em-16', section:'Sistema de Emotes', ver:'v0.55.0 → v0.61.0', risk:'bajo',
+   text:'Rueda: cada chip con su frame congelado + el SELECCIONADO más grande y animando en vivo — agrandado dos veces más a tu pedido',
+   detail:'Confirmado por ti tras probar v0.59.0. Agrandado de nuevo en v0.60.0 y otra vez +30% en v0.61.0 (pediste explícitamente ese porcentaje) — confirma que ahora destaca claramente más que la ronda anterior.',
+   fixedIn:'v0.59.0 (D099/B092) confirmado + v0.60.0 (D100) + v0.61.0 (D101, +30%)', default:'untested'},
+  {id:'em-18', section:'Sistema de Emotes', ver:'v0.59.0', risk:'medio',
+   text:'Inicio y fin de emote suaves (ease-in / ease-out reales)',
+   detail:'Comportamiento nuevo del motor real: al arrancar, el personaje TRANSICIONA suave desde su pose actual hacia el baile (ya no salta seco); al terminar un emote no-loop, cada parte regresa suavizando a la pose normal en ~3 ticks (como Emotecraft). Cancelar moviéndote mantiene su propio fade rápido de siempre.',
+   fixedIn:'v0.59.0 (D099)', default:'untested'},
+  {id:'em-20', section:'Sistema de Emotes', ver:'v0.60.0', risk:'medio', clave:true,
+   text:'Cámara libre en tercera persona durante el emote (pedido nuevo)',
+   detail:'Con un baile corriendo, mueve el stick derecho (o el mouse) — la cámara debe ORBITAR libremente alrededor de tu personaje sin que él gire para seguirte, dejándote ver el baile desde cualquier ángulo. Esto reutiliza el sistema de Cámara Libre que el mod ya tenía (aunque tú no lo tengas activado a mano) — solo se activa DURANTE un emote real, no mientras solo navegas la Biblioteca o la Rueda sin confirmar nada. Al terminar el emote, si no tenías el toggle activado, la cámara vuelve a la normal — puede sentirse como un corte en vez de una transición suave; avísame si te resulta molesto para pulirlo.',
+   fixedIn:'v0.60.0 (D100)', default:'untested'},
+  {id:'em-21', section:'Sistema de Emotes', ver:'v0.60.0 → v0.61.0', risk:'bajo',
+   text:'Volcado de pose detallado en el Debug Dump, ahora con estado de Rueda/Biblioteca y movimiento del jugador',
+   detail:'Genera el Debug Dump MIENTRAS un emote está corriendo — debe aparecer una sección "Local pose" bajo "Emotes" con cada parte y cada eje (habilitado, keyframes, valor EN VIVO, valor por defecto), más si la Rueda/Biblioteca está abierta. Nueva sección "Player Movement" (input crudo, sprinting/sneaking/onGround, velocidad) para diagnosticar si una animación se corta por movimiento inesperado. Si alguna animación se sigue viendo mal, pega TODO esto en tu reporte junto con el nombre exacto del emote.',
+   fixedIn:'v0.60.0 (D100) + v0.61.0 (D101, movimiento del jugador + estado de menús)', default:'untested'},
+  {id:'em-19', section:'Sistema de Emotes', ver:'v0.59.0', risk:'bajo',
+   text:'Nombres y autores reales en los .emotecraft',
+   detail:'La Biblioteca debe mostrar el nombre declarado dentro de cada archivo (p.ej. "Dance Moves" de VMan_2002, "Ascend" de Wah0o; los SPEmotes salen en cirílico y algunos con códigos de color de Minecraft — es lo que el archivo declara), ya no el nombre del archivo.',
+   fixedIn:'v0.59.0 (D099)', default:'untested'},
+  {id:'em-17', section:'Sistema de Emotes', ver:'v0.55.0', risk:'bajo',
+   text:'Sin regresión en el menú radial normal ni en sus pantallas de edición',
+   detail:'Abre el menú radial normal (no el de emotes) — debe verse y sentirse exactamente igual que siempre. El editor de radial y la pantalla de estilo tampoco deberían cambiar.',
+   fixedIn:'v0.55.0', default:'untested'},
+  {id:'em-3', section:'Sistema de Emotes', ver:'v0.50.0', risk:'bajo', clave:true,
+   text:'Reconectar el mando en pleno juego', detail:'Binds/rueda se mantienen sin reiniciar.', default:'confirmed'},
+  {id:'em-4', section:'Sistema de Emotes', ver:'v0.49.0 → v0.61.0', risk:'alto', clave:true,
+   text:'Deformación de emotes — CONFIRMADO gran avance en v0.59.0; "cadera bloqueada/se sienta en el aire" AÚN sin cerrar (v0.61.0)',
+   detail:'CONFIRMASTE tras probar v0.59.0 el mayor avance del histórico ("casi resuelto... ya se ve mucho mejor"). Reportaste después que la cadera sigue sin verse bien (ejemplo: al sentarse, el personaje queda "en el aire" en vez de tocar el piso) y que algunas animaciones deberían tener las piernas más quietas pero se mueven como la Macarena. El fix de pivote de v0.60.0 (Z 0.1→0.0) estaba mal fundamentado y se REVIRTIÓ a 0.1 en v0.61.0 (la propia librería de referencia usa 0.1 como su baseline, no el pivote crudo de vanilla). Se verificaron a fondo las curvas reales de "Sit Adorably" — se ven matemáticamente correctas y consistentes (el torso apenas se mueve, las piernas se doblan por rotación, no por bajar el torso) — la hipótesis más probable es que esto sea una limitación inherente de los emotes de solo-pose (no mueven la posición real del personaje), no un bug, pero ESTO NO ESTÁ CONFIRMADO al 100%. IMPORTANTE: si "piernas como Macarena" persiste, necesito el NOMBRE EXACTO del emote — genera el Debug Dump MIENTRAS esa animación corre (sección "Local pose") y pégalo completo.',
+   fixedIn:'v0.59.0 (D099, avance mayor confirmado) + v0.61.0 (D101, pivote revertido, investigación sin cierre) — necesita nombre de emote específico para seguir', default:'untested'},
+  {id:'em-5', section:'Sistema de Emotes', ver:'v0.49.0', risk:'medio', clave:true,
+   text:'Emote de la rueda de gameplay no se corta', detail:'Cámara transiciona Y el emote se reproduce completo.', default:'confirmed'},
+  {id:'em-6', section:'Sistema de Emotes', ver:'v0.49.0 → v0.54.0', risk:'bajo',
+   text:'Preview con un emote en bucle ya corriendo (editor de rueda / rueda en juego)',
+   detail:'Estas dos pantallas (a diferencia de la Biblioteca) SIGUEN usando el panel lateral fijo — el personaje debe seguir mostrándose ahí sin cambios.', default:'confirmed'},
+  {id:'em-7', section:'Sistema de Emotes', ver:'v0.48.0', risk:'medio',
+   text:'Transición de cámara al emotear en 1ª persona', detail:'Se desliza hacia 3ª persona y de vuelta.', default:'confirmed'},
+  {id:'em-8', section:'Sistema de Emotes', ver:'v0.47.0 → v0.54.0', risk:'bajo',
+   text:'Preview animado en los 3 lugares',
+   detail:'Editor de rueda y rueda en juego: panel lateral fijo, sin cambios. Biblioteca: reemplazado por el preview "AAA" por fila (ver el ítem clave arriba). En menú de ajustes sin mundo cargado sigue sin poder mostrar un jugador real (no es un bug, requiere entidad real) — silueta en negro sigue en el backlog.', default:'confirmed'},
+  {id:'em-9', section:'Sistema de Emotes', ver:'v0.48.0', risk:'bajo',
+   text:'Multi-rueda de emotes', detail:'"+ Rueda" crea una segunda; LB/RB cambia entre ellas.', default:'confirmed'},
+  {id:'em-10', section:'Sistema de Emotes', ver:'v0.48.0', risk:'alto',
+   text:'Regresión: conteo de espacios del radial normal', detail:'El menú radial normal mantiene su número de espacios configurado.', default:'confirmed'},
+  {id:'em-11', section:'Sistema de Emotes', ver:'v0.46.0', risk:'bajo',
+   text:'Cámara vuelve sola a 1ª persona', detail:'Solo si no cambiaste de perspectiva tú mismo.', default:'confirmed'},
+  {id:'em-12', section:'Sistema de Emotes', ver:'v0.46.0', risk:'bajo',
+   text:'Rueda de emotes desacoplada del radial', detail:'No aparece entre las páginas del radial normal.', default:'confirmed'},
+
+  // ---- Mejor Tercera Persona ----
+  {id:'tp-1', section:'Mejor Tercera Persona', ver:'v0.46.0 · B079', risk:'medio',
+   text:'Offset de cámara al hombro', detail:'Sin atravesar paredes cerca de superficies.', default:'confirmed'},
+  {id:'tp-2', section:'Mejor Tercera Persona', ver:'v0.46.0 → v0.51.0', risk:'bajo',
+   text:'Bind de ciclado rápido',
+   detail:'Vivía sin más indicación al final de Botones -> Jugabilidad (sin asignar por defecto). Agregado un botón directo "Asignar ciclado rápido..." en Ajustes Globales -> Tercera Persona que abre Botones ya posicionado.',
+   fixedIn:'v0.51.0', default:'untested'},
+  {id:'tp-3', section:'Mejor Tercera Persona', ver:'v0.46.0 → v0.56.0', risk:'bajo',
+   text:'Etiquetas de lado (Izquierda/Derecha)',
+   detail:'CONFIRMADO invertido en la ronda anterior y corregido en v0.56.0: el vector "derecha" usado internamente resultó ser en realidad el vector izquierda (verificado por 3 métodos geométricos independientes). Selecciona "Izquierda" — la cámara debe ir visualmente a TU izquierda; "Derecha", a tu derecha.',
+   fixedIn:'v0.56.0 (D093)', default:'untested'},
+  {id:'tp-4', section:'Mejor Tercera Persona', ver:'v0.52.0 → v0.56.0', risk:'alto', clave:true,
+   text:'Cámara Libre — rotación desacoplada del cuerpo',
+   detail:'BUG REAL CONFIRMADO Y CORREGIDO en v0.56.0: el mixin cancelaba el update() de la cámara de vanilla por completo, impidiendo que fijara su propio campo "es tercera persona" — por eso se veía "como primera persona, dando vueltas en alguien invisible". Ahora vanilla corre completo y luego se sobreescribe con la pose libre. Actívala en Ajustes Globales -> Cámara libre en tercera persona + asigna THIRD_PERSON_FREE_LOOK_TOGGLE y THIRD_PERSON_ADJUST en Botones -> Jugabilidad. Tu cuerpo debe ser VISIBLE y el stick derecho debe girar la cámara SIN girar el cuerpo.',
+   fixedIn:'v0.56.0 (D093)', default:'untested'},
+  {id:'tp-5', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'medio',
+   text:'Sentido del giro/inclinación de la cámara libre',
+   detail:'Confirma que el stick a la derecha gira la cámara a la derecha (no al revés) y arriba/abajo inclina como se espera. El signo de estas fórmulas se derivó a mano, igual que con el offset simple.',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-6', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'alto', clave:true,
+   text:'Mira funcional ("disparar como en primera persona")',
+   detail:'Con "Mira funcional" activa debe aparecer un crosshair en tercera persona, y atacar/usar/minar debe afectar a lo que EL CROSSHAIR señala, no a hacia dónde mira literalmente el cuerpo.',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-7', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'medio',
+   text:'Puntería predictiva con arco/ballesta/tridente',
+   detail:'Al cargar un arco cerca de un mob, el personaje debe girar para encarar al mob bajo el crosshair, y la flecha debe salir hacia ahí.',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-8', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'medio',
+   text:'Modos de "hacia dónde mira el cuerpo" (parado)',
+   detail:'Prueba los 3 modos: Mirar hacia la mira (por defecto), Seguir a la cámara, Quedarse quieto. Mientras CAMINAS, el personaje debe sentirse exactamente igual que siempre — el sistema solo actúa parado (simplificación deliberada, ver DECISIONS.md D088).',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-9', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'bajo',
+   text:'Ajuste en vivo de offset/distancia',
+   detail:'Mantén THIRD_PERSON_ADJUST: el stick derecho debe mover el encuadre en vez de mirar, y D-pad arriba/abajo debe acercar/alejar la cámara.',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-10', section:'Mejor Tercera Persona', ver:'v0.52.0', risk:'medio',
+   text:'Sin regresión con Cámara Libre apagada / en aim assist y zoom',
+   detail:'Con el toggle nuevo apagado, todo debe sentirse exactamente igual que en v0.51.0. Con la Cámara Libre activa, el aim assist y el zoom deben seguir sintiéndose igual que antes (ambos sistemas se dejaron sin tocar a propósito).',
+   fixedIn:'v0.52.0', default:'untested'},
+  {id:'tp-11', section:'Mejor Tercera Persona', ver:'v0.53.0 → v0.56.0', risk:'alto', clave:true,
+   text:'Movimiento relativo a cámara (opción nueva, apagada por defecto)',
+   detail:'BUG REAL CORREGIDO en v0.56.0: el cuerpo ya giraba y caminaba en la dirección correcta, pero la animación y la elegibilidad de esprintar seguían leyendo la dirección del stick SIN remapear — podías caminar bien pero con animación de strafe y sin poder esprintar. Actívala en Ajustes Globales -> Cámara libre -> Movimiento relativo a cámara. Empuja el stick hacia adelante — debe alejarte de la cámara, el personaje debe girar para seguir esa dirección, Y ahora también debe poder esprintar y mostrar la animación de carrera correcta. Con la opción APAGADA, todo debe sentirse igual que siempre.',
+   fixedIn:'v0.56.0 (D093)', default:'untested'},
+  {id:'tp-12', section:'Mejor Tercera Persona', ver:'v0.53.0 → v0.56.0', risk:'medio',
+   text:'Rendimiento de la Cámara Libre en zonas con varias entidades',
+   detail:'Sin causa concreta encontrada por lectura de código (mismo costo por frame que la cámara de tercera persona de vanilla) — se agregó un temporizador de diagnóstico en vez de una "optimización" sin evidencia. Usa la Cámara Libre varios minutos y luego busca líneas "[thirdperson-perf]" en latest.log (aparecen cada ~2s) — copian el promedio/máximo en ms, compáralo con tu presupuesto de frame real (16.6ms a 60fps) y repórtalo si sigue laggeando.',
+   fixedIn:'v0.56.0 (diagnóstico, sin fix confirmado)', default:'untested'},
+
+  // ---- Vibración / Haptics ----
+  {id:'hp-1', section:'Vibración / Haptics', ver:'v0.34.0 → v0.56.0', risk:'bajo', clave:true,
+   text:'Slime al caminar (y ahora también parado)',
+   detail:'NUEVO en v0.56.0: además del zumbido al caminar sobre slime (ya existente), ahora también hay una pulsación más suave al estar PARADO quieto sobre él — "pegajoso" se siente incluso sin moverte. Si sigue sin sentirse ninguna de las dos, busca líneas "Slime pulse firing" en latest.log — si aparecen y aun así no se siente, es un límite real de driver/hardware, no de detección.',
+   fixedIn:'v0.56.0', default:'untested'},
+  {id:'hp-2', section:'Vibración / Haptics', ver:'v0.43.0 → v0.56.0', risk:'bajo',
+   text:'Vibración de inicio',
+   detail:'Se reportó como "eliminada" de nuevo tras el fix de v0.51.0. Se encontró y corrigió un bug real relacionado: el onboarding (ítem UI de abajo) estaba enganchado a la MISMA re-verificación de handle que esta vibración, y si el handle cambiaba en la ventana de espera (~0.75s), ambos se saltaban en silencio. Si la vibración sigue sin sentirse, busca "Startup rumble SKIPPED" en latest.log — confirmaría que el handle sí cambia en esa ventana, evidencia real para el próximo ajuste.',
+   fixedIn:'v0.56.0 (diagnóstico ampliado)', default:'untested'},
+  {id:'hp-3', section:'Vibración / Haptics', ver:'v0.37.0', risk:'bajo',
+   text:'Selección en menú radial', detail:'Pulso suave + slider de intensidad.', default:'confirmed'},
+  {id:'hp-4', section:'Vibración / Haptics', ver:'v0.33.0', risk:'bajo',
+   text:'Jefes con "enganche"', detail:'Se calla tras el primer golpe, se reinicia al alejarte.', default:'confirmed'},
+  {id:'hp-5', section:'Vibración / Haptics', ver:'v0.32.0', risk:'bajo',
+   text:'Silencio en pausa', detail:'Toda vibración se corta al abrir el menú de pausa.', default:'confirmed'},
+  {id:'hp-6', section:'Vibración / Haptics', ver:'v0.53.0 → v0.56.0', risk:'alto', clave:true,
+   text:'Haptics distintas por arma al golpear',
+   detail:'REPORTADO: solo se siente con flecha y armas arrojadas (usan el botón de USAR); con armas de mano (espada/hacha/puños, botón de ATACAR) no se siente NADA. El mixin y la lógica se revisaron sin encontrar un bug concreto — se agregó logging SIN LÍMITE en cada golpe cuerpo a cuerpo. Golpea con espada/hacha/puños y busca líneas "[haptics-melee]" en latest.log: si NO aparecen, avísame (apunta a un problema de entrada); si aparecen con "canFire=false", apunta a otra vibración ganando el canal; si aparecen normal y aun así no se siente, sería un límite de hardware/driver.',
+   fixedIn:'v0.56.0 (diagnóstico, sin fix confirmado)', default:'untested'},
+  {id:'hp-7', section:'Vibración / Haptics', ver:'v0.53.0', risk:'bajo',
+   text:'Muerte confirmada y flecha confirmada',
+   detail:'REPORTADO: "ya no vibra al matar". El golpe que mata a un mob (con cualquier arma, incluida una flecha) debe sentirse claramente más fuerte que un golpe normal — revisa junto con hp-6 arriba, puede compartir la misma causa si el arma era cuerpo a cuerpo. Un flechazo que impacta (sin matar) debe sentirse como un toque corto y agudo.',
+   fixedIn:'v0.53.0', default:'untested'},
+  {id:'hp-8', section:'Vibración / Haptics', ver:'v0.53.0 → v0.56.0', risk:'bajo',
+   text:'Jugosidad: sacudida de cámara + FOV kick',
+   detail:'CONFIRMADO funcionando — subido un 20% en v0.56.0 a pedido explícito ("hasta podria subir un poquito mas el efecto, muy poco"). Al golpear/matar/recibir daño/explosión/caída fuerte, debe notarse un poquito más marcado que antes, sin llegar a sentirse mareante ni excesivo.',
+   fixedIn:'v0.56.0 (intensidad +20%)', default:'untested'},
+
+  // ---- D-pad / Snap en mods de terceros ----
+  {id:'dp-1', section:'D-pad / Snap en mods de terceros', ver:'v0.38.0 → v0.56.0', risk:'medio', clave:true,
+   text:"Traveler's Backpack",
+   detail:'REVERTIDO en v0.56.0: el radio angosto de v0.51.0 SÍ arreglaba el botón de la mochila, pero rompía la sensación de TODO el inventario general con el cursor virtual ("se siente raro, como que no se tiene control"). Las casillas volvieron a su radio amplio de siempre; el botón de la mochila ahora gana su hueco angosto por una regla de prioridad distinta (no por privar a las casillas de su radio). Confirma AMBAS cosas: el inventario general debe sentirse "confiado" como antes, Y el botón de la mochila debe seguir siendo alcanzable sin perder contra las casillas vecinas.',
+   fixedIn:'v0.56.0 (D094)', default:'untested'},
+  {id:'dp-2', section:'D-pad / Snap en mods de terceros', ver:'v0.43.0', risk:'medio',
+   text:'REI (Roughly Enough Items)', detail:'Buscador, pestañas e ítems del catálogo alcanzables.', default:'confirmed'},
+  {id:'dp-3', section:'D-pad / Snap en mods de terceros', ver:'v0.43.0', risk:'bajo',
+   text:'Sin regresión en navegación normal', detail:'Menús vanilla y del propio SteamPad sin cambios.', default:'confirmed'},
+
+  // ---- Chords y binds ----
+  {id:'ch-1', section:'Chords y binds', ver:'v0.34.0', risk:'alto',
+   text:'Botón compartido entre chord y bind "hold"', detail:'Abre y se mantiene, no abre-y-cierra.', default:'confirmed'},
+  {id:'ch-2', section:'Chords y binds', ver:'v0.31.0', risk:'medio',
+   text:'Chord no dispara doble acción', detail:'Ej. DDOWN=tirar + DDOWN+A=chat.', default:'confirmed'},
+  {id:'ch-3', section:'Chords y binds', ver:'v0.31.0', risk:'bajo',
+   text:'Bind manual "Abrir teclado" en inventario', detail:'Abre sin campo de texto detectado.', default:'confirmed'},
+  {id:'ch-4', section:'Chords y binds', ver:'v0.32.0', risk:'bajo',
+   text:'Reposición del teclado (DUP+RT)', detail:'Mueve el panel arriba/abajo con su glifo.', default:'confirmed'},
+
+  // ---- UI / Menús ----
+  {id:'ui-1', section:'UI / Menús', ver:'v0.30.0', risk:'bajo',
+   text:'Selección de Mundo aterriza en "Jugar"', detail:'A con D-pad enfoca "Jugar", no "Borrar".', default:'confirmed'},
+  {id:'ui-2', section:'UI / Menús', ver:'v0.26.0', risk:'bajo',
+   text:'Sin nombres duplicados en controles cíclicos', detail:'El nombre aparece una sola vez.', default:'confirmed'},
+  {id:'ui-3', section:'UI / Menús', ver:'v0.27.0 → v0.28.0', risk:'bajo',
+   text:'198 glifos nuevos + efecto de presión', detail:'Sin sombra rectangular, RT correcto.', default:'confirmed'},
+  {id:'ui-4', section:'UI / Menús', ver:'v0.28.0', risk:'bajo',
+   text:'Slider de escala de glifos', detail:'50-200% en HUD/hints/radial, no en ajustes.', default:'confirmed'},
+  {id:'ui-5', section:'UI / Menús', ver:'v0.32.0', risk:'bajo',
+   text:'Selector de rueda a eliminar', detail:'Confirmación solo si tiene atajos.', default:'confirmed'},
+  {id:'ui-6', section:'UI / Menús', ver:'v0.25.0', risk:'medio',
+   text:'Zoom: boost de distancia + marcador de entidad', detail:'Boost funciona; marcador sigue al mob con contorno.', default:'confirmed'},
+  {id:'ui-7', section:'UI / Menús', ver:'v0.20.2', risk:'bajo',
+   text:'Marcador de zoom en escaleras', detail:'Sin repro concreto — anotar bloque/ángulo si falla.', default:'confirmed'},
+  {id:'ui-8', section:'UI / Menús', ver:'v0.53.0 → v0.56.0', risk:'medio', clave:true,
+   text:'Pantalla de bienvenida (onboarding)',
+   detail:'BUG REAL CONFIRMADO Y CORREGIDO en v0.56.0: el disparo de onboarding estaba enganchado por accidente a la re-verificación de handle de la vibración de inicio — si el handle cambiaba en esa ventana de ~0.75s (posible en tu setup de streaming), el onboarding se saltaba en silencio para siempre junto con la vibración. Ahora es independiente. Debe aparecer la primera vez que se detecta un mando activo en esta versión — si ya lo viste antes y quieres forzarlo de nuevo, borra "hasSeenOnboarding" de config/steampad/global.json.',
+   fixedIn:'v0.56.0 (D095)', default:'untested'},
+  {id:'ui-9', section:'UI / Menús', ver:'v0.53.0', risk:'bajo',
+   text:'Perfiles de configuración',
+   detail:'En Ajustes Globales -> Administrar perfiles: guarda un perfil, cambia algún ajuste (sensibilidad, un bind), y confirma que cargar el perfil restaura los valores guardados. Prueba también eliminar un perfil.',
+   fixedIn:'v0.53.0', default:'untested'},
+
+  // ---- Detección de Controles / Multi-mando ----
+  {id:'dc-1', section:'Detección de Controles / Multi-mando', ver:'v0.57.0 → v0.58.0', risk:'alto', clave:true,
+   text:'Lag del mouse virtual con el 8BitDo',
+   detail:'✅ CONFIRMADO CORREGIDO por el usuario, CON UNA CONDICIÓN: la primera vez que abrió el juego con el jar v0.58.0 el lag seguía apareciendo — apagó y volvió a encender el 8BitDo, y desde ahí (incluyendo reinicios posteriores con el control ya conectado) funcionó bien. Esa condición del primer arranque NO tiene causa confirmada en código todavía (ver D098). Si vuelve a pasar, repite: apaga y enciende el mando una vez, y avisa si vuelve a necesitarse.',
+   fixedIn:'v0.58.0 (D098) — confirmado en hardware, sesión 29 cont. 8', default:'confirmed'},
+  {id:'dc-4', section:'Detección de Controles / Multi-mando', ver:'v0.58.0', risk:'medio', clave:true,
+   text:'Prueba discriminante: cerrar Steam por completo (2 min)',
+   detail:'MUY valiosa para cerrar este caso con evidencia: cierra Steam POR COMPLETO (Steam -> Salir, que no quede ni el ícono en la bandeja) y mueve el cursor con el 8BitDo. Si se siente perfecto Y las líneas "[mouse-arb]" desaparecen del log -> fuente confirmada al 100%: Steam Input está traduciendo ese mismo mando a mouse en paralelo. Arreglo de raíz (recomendado): Steam -> Ajustes -> Mando -> desactivar Steam Input para el 8BitDo, o poner su Layout de Escritorio en solo-gamepad.',
+   fixedIn:'v0.58.0', default:'untested'},
+  {id:'dc-5', section:'Detección de Controles / Multi-mando', ver:'v0.58.0', risk:'medio',
+   text:'Sin regresión del mouse FÍSICO en menús',
+   detail:'Con el stick QUIETO, mueve el mouse real dentro de un menú — debe tomar el control normalmente, igual que siempre. Con el cursor virtual visible, haz click con el mouse real — el click debe ganar al instante. (El fix solo traga movimiento de mouse MIENTRAS el stick está empujado dirigiendo el cursor.)',
+   fixedIn:'v0.58.0', default:'untested'},
+  {id:'dc-6', section:'Detección de Controles / Multi-mando', ver:'v0.58.0', risk:'bajo', clave:true,
+   text:'Volcado de debug nuevo (mod completo) — genera uno y pégalo',
+   detail:'El Debug Dump ahora cubre TODO el mod: versión, backends+mappings (con el resultado real del load SDL3), cada mando con su etiqueta @SDL3/@GLFW, warning de doble claim de Steam, sección Input Flow con los contadores del mouse (banner "DOUBLE INPUT DETECTED" si pasó), Performance, config del mando activo, toggles globales y emotes. Genera uno después de reproducir cualquier bug y pégalo completo — está diseñado para que cada reporte futuro llegue con su evidencia incluida.',
+   fixedIn:'v0.58.0', default:'untested'},
+  {id:'dc-2', section:'Detección de Controles / Multi-mando', ver:'v0.57.0', risk:'alto', clave:true,
+   text:'Botones mal configurados al fallar sobre otro control',
+   detail:'Conecta ambos mandos, activa el 8BitDo, desconéctalo físicamente y confirma que el otro mando toma el control con sus botones EXACTAMENTE como los tenías configurados, SIN necesitar reiniciar el juego. Causa raíz encontrada en el código (no confirmada al 100% como la única): el failover automático nunca liberaba lo que el mando desconectado tenía sostenido. Si algo sigue mal, busca una línea "[controller-loss] Releasing stuck state" en latest.log del momento exacto de la desconexión y pégala — dirá qué se liberó, o si no se liberó nada (lo que apuntaría a otra causa distinta).',
+   fixedIn:'v0.57.0 (D097, gap real pero sin confirmar como única causa)', default:'untested'},
+  {id:'dc-3', section:'Detección de Controles / Multi-mando', ver:'v0.57.0', risk:'bajo',
+   text:'8BitDo por SDL3 (backend correcto) + paddles',
+   detail:'CONFIRMADO PARCIALMENTE por tu propio log de v0.57.0: el 8BitDo ahora abre por SDL3 ("SDL3 gamepad opened id=1") con P1-P4=true — sus back paddles quedaron expuestos en escritorio por primera vez. Si quieres, prueba asignarles algo en Botones y confirma que responden.',
+   fixedIn:'v0.57.0 (backend confirmado en log)', default:'untested'},
+
+  // ---- Herramientas de diagnóstico ----
+  {id:'dg-1', section:'Herramientas de diagnóstico', ver:'v0.39.0 · B071', risk:'bajo',
+   text:'Panel de prueba de haptics', detail:'26 botones, sin comerse entre sí.', default:'confirmed'},
+  {id:'dg-2', section:'Herramientas de diagnóstico', ver:'v0.39.0 · B071', risk:'bajo',
+   text:'Debug dump ampliado', detail:'Incluye "-- Haptics --" y "-- Screen Widgets --".', default:'confirmed'},
+];
+
+/* ============================================================================================
+ * BACKLOG — lo que NO está implementado todavía, para leer en 10 segundos sin abrir TASKS.md.
+ * Espejo directo de la sección "BACKLOG" de TASKS.md — edítalos juntos. status:
+ *  'pending'  = falta hacerse, sin bloqueo técnico, solo falta tiempo/prioridad.
+ *  'deferred' = decisión deliberada de posponer (por el usuario o por riesgo), no un olvido.
+ *  'blocked'  = no se puede hacer todavía por una dependencia externa fuera de nuestro control.
+ * ========================================================================================== */
+const BACKLOG = [
+  {status:'pending', title:'Silueta en negro para el preview sin mundo cargado',
+   why:'El menú de ajustes no tiene una entidad de jugador real que posar fuera de una partida — se muestra solo texto aclaratorio en su lugar.'},
+  {status:'blocked', title:'.emotecraft "versión 1" y la variante de "Friendship Round Dance"',
+   why:'8 de 21 archivos reales. La wiki pública de Emotecraft documenta el envoltorio del contenedor pero no la codificación interna de keyframes — sin más muestras o sin leer código GPL, no se puede decodificar con confianza.'},
+  {status:'deferred', title:'Transparencia del jugador en Cámara Libre',
+   why:'Cosmética y apagada por defecto incluso en el mod de referencia. Requiere mixins de renderizado (ModelPart/RenderType) — la parte de mayor riesgo/menor beneficio de toda la Cámara Libre, no arriesgada sin poder verla en hardware.'},
+  {status:'deferred', title:'Hit-stop real (congelar la simulación en golpes)',
+   why:'La propia historia del proyecto con bugs de cámara/temporización (D046-D053) hizo que no valiera la pena el riesgo — un shake fuerte ya cubre la mayor parte de esa sensación sin ese peligro.'},
+  {status:'deferred', title:'Rediseño de UI "10-foot" (pantallas grandes para sillón)',
+   why:'Pospuesto explícitamente por decisión tuya ("no lo veo, estoy en duda con esto"), no por una limitación técnica.'},
+  {status:'pending', title:'API pública para compatibilidad con mods de terceros',
+   why:"Técnicamente sencilla de construir, pero su valor depende de que otros autores de mods la adopten — poco realista para un mod de nicho. Se sigue agregando compatibilidad mod por mod (REI, Traveler's Backpack)."},
+  {status:'blocked', title:'Triggers adaptativos (resistencia física de gatillos)',
+   why:'steamworks4j está atado a la API vieja de Steam (ISteamController), no a ISteamInput, que es la que expone los efectos de gatillo. Bloqueado sin cambiar esa dependencia de raíz.'},
+];
+
+// ---- Rendering (no edites de aquí para abajo salvo que cambie el DISEÑO, no el contenido) ----
+const STATE_KEY = 'steampad-checklist-state-v1';
+let state = {};
+try { state = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) { state = {}; }
+
+function getState(id, def){ return state[id]?.state || def; }
+function getNote(id){ return state[id]?.note || ''; }
+function setItemState(id, s){ state[id] = state[id] || {}; state[id].state = s; save(); }
+function setItemNote(id, n){ state[id] = state[id] || {}; state[id].note = n; save(); }
+function save(){ try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch(e) {} }
+
+document.getElementById('mainTitle').textContent = META.title.replace('SteamPad — ', '');
+document.getElementById('introText').innerHTML = META.intro;
+document.getElementById('footerText').textContent = META.footer;
+
+// ---- Backlog panel: read-only, collapsed by default (a "did you know X isn't built yet" reference,
+// not something to check off) — opens automatically if it's ever emptied to zero, though it never
+// will be in practice (there's always SOMETHING deferred/blocked in a project this size).
+(function renderBacklog() {
+  const box = document.getElementById('backlogBox');
+  if (!BACKLOG.length) return;
+  const statusLabel = {pending:'Pendiente', deferred:'Pospuesto', blocked:'Bloqueado'};
+  const det = document.createElement('details');
+  det.className = 'backlog';
+  const summary = document.createElement('summary');
+  summary.innerHTML = `<span class="backlog-title">🔧 Pendiente de implementar</span>` +
+      `<span class="backlog-count">${BACKLOG.length} ${BACKLOG.length === 1 ? 'punto' : 'puntos'} — sin marcar aquí, se controlan en TASKS.md</span>`;
+  det.appendChild(summary);
+  const ul = document.createElement('ul');
+  BACKLOG.forEach(b => {
+    const li = document.createElement('li');
+    li.innerHTML = `<b>${b.title}<span class="status ${b.status}">${statusLabel[b.status] || b.status}</span></b>` +
+        `<span class="why">${b.why}</span>`;
+    ul.appendChild(li);
+  });
+  det.appendChild(ul);
+  box.appendChild(det);
+})();
+
+const bySection = new Map();
+ITEMS.forEach(it => {
+  if (!bySection.has(it.section)) bySection.set(it.section, []);
+  bySection.get(it.section).push(it);
+});
+
+const sectionsEl = document.getElementById('sections');
+for (const [name, items] of bySection) {
+  const allConfirmed = items.every(it => getState(it.id, it.default) === 'confirmed');
+  const det = document.createElement('details');
+  det.className = 'section';
+  det.open = !allConfirmed;
+  const ver = items[0].ver;
+
+  const summary = document.createElement('summary');
+  summary.innerHTML = `
+    <div class="sec-title">
+      <span class="sec-name">${name}</span>
+      <span class="sec-ver">${ver}</span>
+    </div>
+    <div class="sec-right">
+      <span class="sec-count" data-sec="${name}"></span>
+      <span class="chevron">▶</span>
+    </div>`;
+  det.appendChild(summary);
+
+  const ul = document.createElement('ul');
+  ul.className = 'items';
+  items.forEach(it => ul.appendChild(renderItem(it)));
+  det.appendChild(ul);
+
+  sectionsEl.appendChild(det);
+}
+
+function renderItem(it) {
+  const li = document.createElement('li');
+  li.className = 'item risk-' + (it.risk || 'bajo');
+
+  const claveTag = it.clave ? '<span class="clave-tag">Clave</span>' : '';
+  const fixedTag = it.fixedIn ? `<span class="fixed-tag">corregido ${it.fixedIn}</span>` : '';
+
+  const row = document.createElement('div');
+  row.className = 'item-row';
+  row.innerHTML = `
+    <div class="item-text">
+      <div class="item-claim">${claveTag}${it.text}${fixedTag}</div>
+      <div class="item-detail">${it.detail}</div>
+    </div>
+    <div class="tristate" data-id="${it.id}">
+      <button data-state="untested" title="No probado">No probado</button>
+      <button data-state="failed" title="Falló / pendiente">Falló</button>
+      <button data-state="confirmed" title="Confirmado funcionando">✓ OK</button>
+    </div>`;
+  li.appendChild(row);
+
+  const tri = row.querySelector('.tristate');
+  const current = getState(it.id, it.default);
+  [...tri.children].forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.state === current);
+    btn.addEventListener('click', () => {
+      setItemState(it.id, btn.dataset.state);
+      [...tri.children].forEach(b => b.classList.toggle('active', b === btn));
+      updateAll();
+    });
+  });
+
+  const noteRow = document.createElement('div');
+  noteRow.className = 'note-row';
+  const existingNote = getNote(it.id);
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'note-toggle' + (existingNote ? ' has-note' : '');
+  toggle.textContent = existingNote ? '📝 Nota (con contenido)' : '📝 Agregar nota';
+  const box = document.createElement('textarea');
+  box.className = 'note-box' + (existingNote ? ' open' : '');
+  box.placeholder = '¿Qué pasó exactamente?';
+  box.value = existingNote;
+  toggle.addEventListener('click', () => box.classList.toggle('open'));
+  box.addEventListener('input', () => {
+    setItemNote(it.id, box.value);
+    const has = !!box.value.trim();
+    toggle.classList.toggle('has-note', has);
+    toggle.textContent = has ? '📝 Nota (con contenido)' : '📝 Agregar nota';
+  });
+  noteRow.appendChild(toggle);
+  noteRow.appendChild(box);
+  li.appendChild(noteRow);
+
+  return li;
+}
+
+function updateAll() {
+  let ok = 0, fail = 0, total = ITEMS.length;
+  ITEMS.forEach(it => {
+    const s = getState(it.id, it.default);
+    if (s === 'confirmed') ok++; else if (s === 'failed') fail++;
+  });
+  document.getElementById('countLabel').innerHTML =
+    `<b class="ok">${ok} OK</b> · <b class="fail">${fail} fallando</b> · ${total} total`;
+  document.getElementById('barOk').style.width = (total ? ok/total*100 : 0) + '%';
+  document.getElementById('barFail').style.width = (total ? fail/total*100 : 0) + '%';
+
+  for (const [name, items] of bySection) {
+    const c = items.filter(it => getState(it.id, it.default) === 'confirmed').length;
+    const label = document.querySelector(`[data-sec="${CSS.escape(name)}"]`);
+    if (label) {
+      label.textContent = c + '/' + items.length;
+      label.classList.toggle('done', c === items.length);
+    }
+  }
+}
+updateAll();
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('Esto borra todos los estados y notas guardados en este navegador. ¿Continuar?')) return;
+  state = {};
+  save();
+  location.reload();
+});
+
+// ---- Export ----
+function claimPlain(it) {
+  return (it.clave ? '[CLAVE] ' : '') + it.text;
+}
+function stateMark(s) { return s === 'confirmed' ? 'x' : (s === 'failed' ? '!' : ' '); }
+
+function buildReport() {
+  const now = new Date();
+  let dateStr;
+  try { dateStr = now.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' }); }
+  catch(e) { dateStr = now.toString(); }
+
+  let totalOk = 0, totalFail = 0, total = ITEMS.length;
+  const lines = [];
+  for (const [name, items] of bySection) {
+    let secOk = 0;
+    const secLines = [];
+    items.forEach(it => {
+      const s = getState(it.id, it.default);
+      if (s === 'confirmed') { totalOk++; secOk++; }
+      if (s === 'failed') totalFail++;
+      secLines.push(`- [${stateMark(s)}] ${claimPlain(it)}`);
+      const note = getNote(it.id).trim();
+      if (note) note.split('\n').forEach(nl => secLines.push('      Nota: ' + nl));
+    });
+    lines.push(`## ${name} — ${items[0].ver} — ${secOk}/${items.length}`);
+    lines.push(...secLines);
+    lines.push('');
+  }
+  const header = [
+    `# SteamPad — Reporte de validación (${dateStr})`,
+    `Progreso: ${totalOk} OK / ${totalFail} fallando / ${total} total`,
+    'Leyenda: [x] confirmado · [!] falló o pendiente (ver Nota) · [ ] no probado',
+    ''
+  ];
+  return header.concat(lines).join('\n');
+}
+
+const modalBackdrop = document.getElementById('modalBackdrop');
+const modalStatus = document.getElementById('modalStatus');
+const reportBox = document.getElementById('reportBox');
+
+function openModal() {
+  const report = buildReport();
+  reportBox.value = report;
+  modalBackdrop.classList.add('open');
+  modalStatus.textContent = 'Selecciona el texto y cópialo (Ctrl+C) para pegarlo en el chat.';
+  modalStatus.classList.remove('ok');
+  reportBox.focus();
+  reportBox.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(report).then(() => {
+      modalStatus.textContent = '✅ Copiado al portapapeles — pégalo directo en el chat.';
+      modalStatus.classList.add('ok');
+    }).catch(() => {});
+  }
+}
+function closeModal() { modalBackdrop.classList.remove('open'); }
+
+document.getElementById('exportBtn').addEventListener('click', openModal);
+document.getElementById('modalCloseBtn').addEventListener('click', closeModal);
+document.getElementById('modalCopyBtn').addEventListener('click', () => {
+  reportBox.focus();
+  reportBox.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(reportBox.value).then(() => {
+      modalStatus.textContent = '✅ Copiado al portapapeles — pégalo directo en el chat.';
+      modalStatus.classList.add('ok');
+    }).catch(() => {
+      modalStatus.textContent = 'No se pudo copiar automático — ya está seleccionado, usa Ctrl+C.';
+      modalStatus.classList.remove('ok');
+    });
+  }
+});
+modalBackdrop.addEventListener('click', (e) => { if (e.target === modalBackdrop) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalBackdrop.classList.contains('open')) closeModal(); });
+</script>

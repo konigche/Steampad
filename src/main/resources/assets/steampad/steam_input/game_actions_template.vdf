@@ -1,0 +1,353 @@
+"In Game Actions"
+{
+	"major_revision"	"3"
+	"minor_revision"	"0"
+	"actions"
+	{
+		"SteamPad_Gameplay"
+		{
+			"title"		"#SteamPad_Gameplay"
+			"StickPadGyro"
+			{
+				"steampad_left_stick"
+				{
+					"title"		"#steampad_left_stick"
+					"input_mode"	"joystick_move"
+				}
+				"steampad_right_stick"
+				{
+					"title"		"#steampad_right_stick"
+					"input_mode"	"joystick_camera"
+				}
+			}
+			"Button"
+			{
+				"steampad_jump"			{ "title" "#steampad_jump" }
+				"steampad_sneak"		{ "title" "#steampad_sneak" }
+				"steampad_sprint"		{ "title" "#steampad_sprint" }
+				"steampad_attack"		{ "title" "#steampad_attack" }
+				"steampad_use"			{ "title" "#steampad_use" }
+				"steampad_drop_item"		{ "title" "#steampad_drop_item" }
+				"steampad_drop_stack"		{ "title" "#steampad_drop_stack" }
+				"steampad_pick_block"		{ "title" "#steampad_pick_block" }
+				"steampad_swap_hands"		{ "title" "#steampad_swap_hands" }
+				"steampad_next_hotbar"		{ "title" "#steampad_next_hotbar" }
+				"steampad_prev_hotbar"		{ "title" "#steampad_prev_hotbar" }
+				"steampad_open_radial"		{ "title" "#steampad_open_radial" }
+				"steampad_inventory"		{ "title" "#steampad_inventory" }
+				"steampad_open_chat"		{ "title" "#steampad_open_chat" }
+				"steampad_change_perspective"	{ "title" "#steampad_change_perspective" }
+				"steampad_pause"		{ "title" "#steampad_pause" }
+				"steampad_gyro_button"		{ "title" "#steampad_gyro_button" }
+				"steampad_toggle_debug"		{ "title" "#steampad_toggle_debug" }
+				"steampad_walk_forward"		{ "title" "#steampad_walk_forward" }
+				"steampad_walk_backward"	{ "title" "#steampad_walk_backward" }
+				"steampad_strafe_left"		{ "title" "#steampad_strafe_left" }
+				"steampad_strafe_right"		{ "title" "#steampad_strafe_right" }
+				"steampad_slot_1"		{ "title" "#steampad_slot_1" }
+				"steampad_slot_2"		{ "title" "#steampad_slot_2" }
+				"steampad_slot_3"		{ "title" "#steampad_slot_3" }
+				"steampad_slot_4"		{ "title" "#steampad_slot_4" }
+				"steampad_slot_5"		{ "title" "#steampad_slot_5" }
+				"steampad_slot_6"		{ "title" "#steampad_slot_6" }
+				"steampad_slot_7"		{ "title" "#steampad_slot_7" }
+				"steampad_slot_8"		{ "title" "#steampad_slot_8" }
+				"steampad_slot_9"		{ "title" "#steampad_slot_9" }
+				"steampad_slot_10"		{ "title" "#steampad_slot_10" }
+			}
+		}
+		"SteamPad_Menu"
+		{
+			"title"		"#SteamPad_Menu"
+			"StickPadGyro"
+			{
+				"steampad_vmouse"
+				{
+					"title"		"#steampad_vmouse"
+					"input_mode"	"absolute_mouse"
+				}
+				"steampad_left_stick"
+				{
+					"title"		"#steampad_left_stick"
+					"input_mode"	"joystick_move"
+				}
+				"steampad_right_stick"
+				{
+					"title"		"#steampad_right_stick"
+					"input_mode"	"joystick_camera"
+				}
+			}
+			"Button"
+			{
+				"steampad_gui_press"		{ "title" "#steampad_gui_press" }
+				"steampad_gui_back"		{ "title" "#steampad_gui_back" }
+				"steampad_gui_nav_up"		{ "title" "#steampad_gui_nav_up" }
+				"steampad_gui_nav_down"		{ "title" "#steampad_gui_nav_down" }
+				"steampad_gui_nav_left"		{ "title" "#steampad_gui_nav_left" }
+				"steampad_gui_nav_right"	{ "title" "#steampad_gui_nav_right" }
+				"steampad_gui_next_tab"		{ "title" "#steampad_gui_next_tab" }
+				"steampad_gui_prev_tab"		{ "title" "#steampad_gui_prev_tab" }
+				"steampad_cycle_forward"	{ "title" "#steampad_cycle_forward" }
+				"steampad_cycle_backward"	{ "title" "#steampad_cycle_backward" }
+				"steampad_toggle_vmouse"	{ "title" "#steampad_toggle_vmouse" }
+				"steampad_slot_1"		{ "title" "#steampad_slot_1" }
+				"steampad_slot_2"		{ "title" "#steampad_slot_2" }
+				"steampad_slot_3"		{ "title" "#steampad_slot_3" }
+				"steampad_slot_4"		{ "title" "#steampad_slot_4" }
+				"steampad_slot_5"		{ "title" "#steampad_slot_5" }
+				"steampad_slot_6"		{ "title" "#steampad_slot_6" }
+				"steampad_slot_7"		{ "title" "#steampad_slot_7" }
+				"steampad_slot_8"		{ "title" "#steampad_slot_8" }
+				"steampad_slot_9"		{ "title" "#steampad_slot_9" }
+				"steampad_slot_10"		{ "title" "#steampad_slot_10" }
+			}
+		}
+		"SteamPad_Inventory"
+		{
+			"title"		"#SteamPad_Inventory"
+			"StickPadGyro"
+			{
+				"steampad_vmouse"
+				{
+					"title"		"#steampad_vmouse"
+					"input_mode"	"absolute_mouse"
+				}
+				"steampad_left_stick"
+				{
+					"title"		"#steampad_left_stick"
+					"input_mode"	"joystick_move"
+				}
+				"steampad_right_stick"
+				{
+					"title"		"#steampad_right_stick"
+					"input_mode"	"joystick_camera"
+				}
+			}
+			"Button"
+			{
+				"steampad_gui_press"		{ "title" "#steampad_gui_press" }
+				"steampad_gui_back"		{ "title" "#steampad_gui_back" }
+				"steampad_gui_nav_up"		{ "title" "#steampad_gui_nav_up" }
+				"steampad_gui_nav_down"		{ "title" "#steampad_gui_nav_down" }
+				"steampad_gui_nav_left"		{ "title" "#steampad_gui_nav_left" }
+				"steampad_gui_nav_right"	{ "title" "#steampad_gui_nav_right" }
+				"steampad_gui_next_tab"		{ "title" "#steampad_gui_next_tab" }
+				"steampad_gui_prev_tab"		{ "title" "#steampad_gui_prev_tab" }
+				"steampad_swap_hands"		{ "title" "#steampad_swap_hands" }
+				"steampad_toggle_vmouse"	{ "title" "#steampad_toggle_vmouse" }
+				"steampad_slot_1"		{ "title" "#steampad_slot_1" }
+				"steampad_slot_2"		{ "title" "#steampad_slot_2" }
+				"steampad_slot_3"		{ "title" "#steampad_slot_3" }
+				"steampad_slot_4"		{ "title" "#steampad_slot_4" }
+				"steampad_slot_5"		{ "title" "#steampad_slot_5" }
+				"steampad_slot_6"		{ "title" "#steampad_slot_6" }
+				"steampad_slot_7"		{ "title" "#steampad_slot_7" }
+				"steampad_slot_8"		{ "title" "#steampad_slot_8" }
+				"steampad_slot_9"		{ "title" "#steampad_slot_9" }
+				"steampad_slot_10"		{ "title" "#steampad_slot_10" }
+			}
+		}
+		"SteamPad_Mounted"
+		{
+			"title"		"#SteamPad_Mounted"
+			"StickPadGyro"
+			{
+				"steampad_left_stick"
+				{
+					"title"		"#steampad_left_stick"
+					"input_mode"	"joystick_move"
+				}
+				"steampad_right_stick"
+				{
+					"title"		"#steampad_right_stick"
+					"input_mode"	"joystick_camera"
+				}
+			}
+			"Button"
+			{
+				"steampad_jump"			{ "title" "#steampad_jump" }
+				"steampad_sneak"		{ "title" "#steampad_sneak" }
+				"steampad_attack"		{ "title" "#steampad_attack" }
+				"steampad_use"			{ "title" "#steampad_use" }
+				"steampad_next_hotbar"		{ "title" "#steampad_next_hotbar" }
+				"steampad_prev_hotbar"		{ "title" "#steampad_prev_hotbar" }
+				"steampad_inventory"		{ "title" "#steampad_inventory" }
+				"steampad_open_chat"		{ "title" "#steampad_open_chat" }
+				"steampad_change_perspective"	{ "title" "#steampad_change_perspective" }
+				"steampad_pause"		{ "title" "#steampad_pause" }
+				"steampad_slot_1"		{ "title" "#steampad_slot_1" }
+				"steampad_slot_2"		{ "title" "#steampad_slot_2" }
+				"steampad_slot_3"		{ "title" "#steampad_slot_3" }
+				"steampad_slot_4"		{ "title" "#steampad_slot_4" }
+				"steampad_slot_5"		{ "title" "#steampad_slot_5" }
+				"steampad_slot_6"		{ "title" "#steampad_slot_6" }
+				"steampad_slot_7"		{ "title" "#steampad_slot_7" }
+				"steampad_slot_8"		{ "title" "#steampad_slot_8" }
+				"steampad_slot_9"		{ "title" "#steampad_slot_9" }
+				"steampad_slot_10"		{ "title" "#steampad_slot_10" }
+			}
+		}
+	}
+	"localization"
+	{
+		"english"
+		{
+			"SteamPad_Gameplay"		"SteamPad — Gameplay"
+			"SteamPad_Menu"			"SteamPad — Menu"
+			"SteamPad_Inventory"		"SteamPad — Inventory"
+			"SteamPad_Mounted"		"SteamPad — Mounted"
+			"steampad_left_stick"		"Left Joystick — Move"
+			"steampad_right_stick"		"Right Joystick — Camera"
+			"steampad_vmouse"		"Virtual Mouse Cursor"
+			"steampad_walk_forward"		"Walk Forward (digital)"
+			"steampad_walk_backward"	"Walk Backward (digital)"
+			"steampad_strafe_left"		"Strafe Left (digital)"
+			"steampad_strafe_right"		"Strafe Right (digital)"
+			"steampad_jump"			"Jump"
+			"steampad_sneak"		"Sneak / Descend / Dismount"
+			"steampad_attack"		"Attack / Mine"
+			"steampad_use"			"Use / Build"
+			"steampad_sprint"		"Sprint"
+			"steampad_pause"		"Pause / Resume"
+			"steampad_inventory"		"Open Inventory"
+			"steampad_swap_hands"		"Swap Item in Hand"
+			"steampad_open_chat"		"Open Chat"
+			"steampad_drop_item"		"Drop Item"
+			"steampad_drop_stack"		"Drop Stack"
+			"steampad_pick_block"		"Pick Block"
+			"steampad_change_perspective"	"Change Perspective"
+			"steampad_next_hotbar"		"Next Hotbar Slot"
+			"steampad_prev_hotbar"		"Previous Hotbar Slot"
+			"steampad_open_radial"		"Open Radial Menu"
+			"steampad_toggle_debug"		"Toggle Debug Overlay"
+			"steampad_gyro_button"		"Gyro Enable Button"
+			"steampad_slot_1"		"SteamPad Slot 1 (assign in mod)"
+			"steampad_slot_2"		"SteamPad Slot 2 (assign in mod)"
+			"steampad_slot_3"		"SteamPad Slot 3 (assign in mod)"
+			"steampad_slot_4"		"SteamPad Slot 4 (assign in mod)"
+			"steampad_slot_5"		"SteamPad Slot 5 (assign in mod)"
+			"steampad_slot_6"		"SteamPad Slot 6 (assign in mod)"
+			"steampad_slot_7"		"SteamPad Slot 7 (assign in mod)"
+			"steampad_slot_8"		"SteamPad Slot 8 (assign in mod)"
+			"steampad_slot_9"		"SteamPad Slot 9 (assign in mod)"
+			"steampad_slot_10"		"SteamPad Slot 10 (assign in mod)"
+			"steampad_gui_press"		"Confirm / Click"
+			"steampad_gui_back"		"Back / Close"
+			"steampad_gui_nav_up"		"Navigate Up"
+			"steampad_gui_nav_down"		"Navigate Down"
+			"steampad_gui_nav_left"		"Navigate Left"
+			"steampad_gui_nav_right"	"Navigate Right"
+			"steampad_gui_next_tab"		"Next Tab"
+			"steampad_gui_prev_tab"		"Previous Tab"
+			"steampad_cycle_forward"	"Cycle Forward"
+			"steampad_cycle_backward"	"Cycle Backward"
+			"steampad_toggle_vmouse"	"Toggle Virtual Mouse"
+		}
+		"spanish"
+		{
+			"SteamPad_Gameplay"		"SteamPad — Jugabilidad"
+			"SteamPad_Menu"			"SteamPad — Menú"
+			"SteamPad_Inventory"		"SteamPad — Inventario"
+			"SteamPad_Mounted"		"SteamPad — Montado"
+			"steampad_left_stick"		"Joystick izquierdo — Mover"
+			"steampad_right_stick"		"Joystick derecho — Cámara"
+			"steampad_vmouse"		"Cursor de ratón virtual"
+			"steampad_walk_forward"		"Caminar adelante (digital)"
+			"steampad_walk_backward"	"Caminar atrás (digital)"
+			"steampad_strafe_left"		"Desplazarse izquierda (digital)"
+			"steampad_strafe_right"		"Desplazarse derecha (digital)"
+			"steampad_jump"			"Saltar"
+			"steampad_sneak"		"Agacharse / Descender / Desmontar"
+			"steampad_attack"		"Atacar / Minar"
+			"steampad_use"			"Usar / Construir"
+			"steampad_sprint"		"Correr"
+			"steampad_pause"		"Pausa"
+			"steampad_inventory"		"Abrir inventario"
+			"steampad_swap_hands"		"Cambiar mano"
+			"steampad_open_chat"		"Abrir chat"
+			"steampad_drop_item"		"Soltar objeto"
+			"steampad_drop_stack"		"Soltar pila"
+			"steampad_pick_block"		"Seleccionar bloque"
+			"steampad_change_perspective"	"Cambiar perspectiva"
+			"steampad_next_hotbar"		"Siguiente ranura hotbar"
+			"steampad_prev_hotbar"		"Ranura hotbar anterior"
+			"steampad_open_radial"		"Abrir menú radial"
+			"steampad_toggle_debug"		"Alternar debug"
+			"steampad_gyro_button"		"Botón de giroscopio"
+			"steampad_slot_1"		"Ranura SteamPad 1 (se asigna en el mod)"
+			"steampad_slot_2"		"Ranura SteamPad 2 (se asigna en el mod)"
+			"steampad_slot_3"		"Ranura SteamPad 3 (se asigna en el mod)"
+			"steampad_slot_4"		"Ranura SteamPad 4 (se asigna en el mod)"
+			"steampad_slot_5"		"Ranura SteamPad 5 (se asigna en el mod)"
+			"steampad_slot_6"		"Ranura SteamPad 6 (se asigna en el mod)"
+			"steampad_slot_7"		"Ranura SteamPad 7 (se asigna en el mod)"
+			"steampad_slot_8"		"Ranura SteamPad 8 (se asigna en el mod)"
+			"steampad_slot_9"		"Ranura SteamPad 9 (se asigna en el mod)"
+			"steampad_slot_10"		"Ranura SteamPad 10 (se asigna en el mod)"
+			"steampad_gui_press"		"Confirmar / Clic"
+			"steampad_gui_back"		"Atrás / Cerrar"
+			"steampad_gui_nav_up"		"Navegar arriba"
+			"steampad_gui_nav_down"		"Navegar abajo"
+			"steampad_gui_nav_left"		"Navegar izquierda"
+			"steampad_gui_nav_right"	"Navegar derecha"
+			"steampad_gui_next_tab"		"Pestaña siguiente"
+			"steampad_gui_prev_tab"		"Pestaña anterior"
+			"steampad_cycle_forward"	"Ciclo adelante"
+			"steampad_cycle_backward"	"Ciclo atrás"
+			"steampad_toggle_vmouse"	"Alternar ratón virtual"
+		}
+		"latam"
+		{
+			"SteamPad_Gameplay"		"SteamPad — Jugabilidad"
+			"SteamPad_Menu"			"SteamPad — Menú"
+			"SteamPad_Inventory"		"SteamPad — Inventario"
+			"SteamPad_Mounted"		"SteamPad — Montado"
+			"steampad_left_stick"		"Joystick izquierdo — Mover"
+			"steampad_right_stick"		"Joystick derecho — Cámara"
+			"steampad_vmouse"		"Cursor de mouse virtual"
+			"steampad_walk_forward"		"Caminar adelante (digital)"
+			"steampad_walk_backward"	"Caminar atrás (digital)"
+			"steampad_strafe_left"		"Desplazarse izquierda (digital)"
+			"steampad_strafe_right"		"Desplazarse derecha (digital)"
+			"steampad_jump"			"Saltar"
+			"steampad_sneak"		"Agacharse / Descender / Desmontar"
+			"steampad_attack"		"Atacar / Minar"
+			"steampad_use"			"Usar / Construir"
+			"steampad_sprint"		"Correr"
+			"steampad_pause"		"Pausa"
+			"steampad_inventory"		"Abrir inventario"
+			"steampad_swap_hands"		"Cambiar mano"
+			"steampad_open_chat"		"Abrir chat"
+			"steampad_drop_item"		"Soltar objeto"
+			"steampad_drop_stack"		"Soltar pila"
+			"steampad_pick_block"		"Seleccionar bloque"
+			"steampad_change_perspective"	"Cambiar perspectiva"
+			"steampad_next_hotbar"		"Siguiente ranura hotbar"
+			"steampad_prev_hotbar"		"Ranura hotbar anterior"
+			"steampad_open_radial"		"Abrir menú radial"
+			"steampad_toggle_debug"		"Alternar debug"
+			"steampad_gyro_button"		"Botón de giroscopio"
+			"steampad_slot_1"		"Ranura SteamPad 1 (se asigna en el mod)"
+			"steampad_slot_2"		"Ranura SteamPad 2 (se asigna en el mod)"
+			"steampad_slot_3"		"Ranura SteamPad 3 (se asigna en el mod)"
+			"steampad_slot_4"		"Ranura SteamPad 4 (se asigna en el mod)"
+			"steampad_slot_5"		"Ranura SteamPad 5 (se asigna en el mod)"
+			"steampad_slot_6"		"Ranura SteamPad 6 (se asigna en el mod)"
+			"steampad_slot_7"		"Ranura SteamPad 7 (se asigna en el mod)"
+			"steampad_slot_8"		"Ranura SteamPad 8 (se asigna en el mod)"
+			"steampad_slot_9"		"Ranura SteamPad 9 (se asigna en el mod)"
+			"steampad_slot_10"		"Ranura SteamPad 10 (se asigna en el mod)"
+			"steampad_gui_press"		"Confirmar / Clic"
+			"steampad_gui_back"		"Atrás / Cerrar"
+			"steampad_gui_nav_up"		"Navegar arriba"
+			"steampad_gui_nav_down"		"Navegar abajo"
+			"steampad_gui_nav_left"		"Navegar izquierda"
+			"steampad_gui_nav_right"	"Navegar derecha"
+			"steampad_gui_next_tab"		"Pestaña siguiente"
+			"steampad_gui_prev_tab"		"Pestaña anterior"
+			"steampad_cycle_forward"	"Ciclo adelante"
+			"steampad_cycle_backward"	"Ciclo atrás"
+			"steampad_toggle_vmouse"	"Alternar mouse virtual"
+		}
+	}
+}

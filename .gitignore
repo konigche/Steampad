@@ -1,0 +1,28 @@
+# Gradle / Java build outputs
+.gradle/
+build/
+out/
+bin/
+
+# Minecraft Run directory (logs, saves, run cache)
+run/
+logs/
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+
+# System & OS temp files
+.DS_Store
+Thumbs.db
+*.log
+*.log.gz
+
+# Local Graphify outputs (re-generated dynamically)
+graphify-out/

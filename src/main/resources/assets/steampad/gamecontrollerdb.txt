@@ -1,0 +1,22 @@
+# SteamPad — curated SDL gamepad mappings (focused on 8BitDo).
+# Format: SDL GameControllerDB (GUID,Name,mappings,platform:Linux,)
+# Only entries whose controller GUID matches a connected device take effect; the rest are ignored.
+# To add YOUR device, drop a full gamecontrollerdb.txt (or a single line) at:
+#   config/steampad/gamecontrollerdb.txt
+# Get exact lines from https://github.com/mdqinc/SDL_GameControllerDB
+#
+# 8BitDo controllers expose several modes (X-input / D-input / Switch / Mac). X-input mode is the
+# most compatible — if a pad misbehaves, power it on in X-input mode (typically hold Start+X) so it
+# enumerates as an Xbox-style gamepad. These entries cover the common Linux GUIDs.
+
+# --- 8BitDo SN30 Pro ---
+03000000c82d00000160000011010000,8BitDo SN30 Pro,a:b1,b:b0,x:b4,y:b3,back:b10,start:b11,leftshoulder:b6,rightshoulder:b7,lefttrigger:a5,righttrigger:a4,leftstick:b13,rightstick:b14,leftx:a0,lefty:a1,rightx:a2,righty:a3,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b12,platform:Linux,
+05000000c82d00000161000000010000,8BitDo SN30 Pro,a:b1,b:b0,x:b4,y:b3,back:b10,start:b11,leftshoulder:b6,rightshoulder:b7,lefttrigger:a5,righttrigger:a4,leftstick:b13,rightstick:b14,leftx:a0,lefty:a1,rightx:a2,righty:a3,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b12,platform:Linux,
+
+# --- 8BitDo Pro 2 ---
+03000000c82d00000660000011010000,8BitDo Pro 2,a:b1,b:b0,x:b4,y:b3,back:b10,start:b11,leftshoulder:b6,rightshoulder:b7,lefttrigger:a5,righttrigger:a4,leftstick:b13,rightstick:b14,leftx:a0,lefty:a1,rightx:a2,righty:a3,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b12,platform:Linux,
+05000000c82d00000660000000010000,8BitDo Pro 2,a:b1,b:b0,x:b4,y:b3,back:b10,start:b11,leftshoulder:b6,rightshoulder:b7,lefttrigger:a5,righttrigger:a4,leftstick:b13,rightstick:b14,leftx:a0,lefty:a1,rightx:a2,righty:a3,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b12,platform:Linux,
+
+# --- 8BitDo Ultimate (2.4G / wired) — X-input mode enumerates Xbox-style ---
+03000000c82d00001038000011010000,8BitDo Ultimate Wired,a:b0,b:b1,x:b2,y:b3,back:b6,start:b7,leftshoulder:b4,rightshoulder:b5,lefttrigger:a2,righttrigger:a5,leftstick:b9,rightstick:b10,leftx:a0,lefty:a1,rightx:a3,righty:a4,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b8,platform:Linux,
+05000000c82d00000031000000010000,8BitDo Ultimate Wireless,a:b0,b:b1,x:b2,y:b3,back:b6,start:b7,leftshoulder:b4,rightshoulder:b5,lefttrigger:a2,righttrigger:a5,leftstick:b9,rightstick:b10,leftx:a0,lefty:a1,rightx:a3,righty:a4,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,guide:b8,platform:Linux,
