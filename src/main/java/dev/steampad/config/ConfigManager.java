@@ -25,9 +25,12 @@ public final class ConfigManager {
     private static final Path CONTROLLERS_DIR = CONFIG_ROOT.resolve("controllers");
 
     private static GlobalConfig global;
-    private static final Map<Long, ControllerConfig> controllerConfigs = new HashMap<>();
-    private static final Map<Long, BindingConfig> bindingConfigs = new HashMap<>();
-    private static final Map<Long, RadialConfig> radialConfigs = new HashMap<>();
+    // Keyed by the PERSISTENT identity key, not by the handle — see storageKey(). A reconnect hands
+    // the same physical pad a brand-new handle but the same key, so its already-loaded config is
+    // simply still there: no copying, no cache eviction, no window where a default could be written.
+    private static final Map<String, ControllerConfig> controllerConfigs = new HashMap<>();
+    private static final Map<String, BindingConfig> bindingConfigs = new HashMap<>();
+    private static final Map<String, RadialConfig> radialConfigs = new HashMap<>();
 
     private ConfigManager() {}
 
@@ -51,76 +54,152 @@ public final class ConfigManager {
     }
 
     public static ControllerConfig getControllerConfig(long handle) {
-        return controllerConfigs.computeIfAbsent(handle, h -> {
-            Path path = controllerPath(h);
-            return JsonUtil.loadFromFile(path, ControllerConfig.class, ControllerConfig.defaults());
-        });
+        String key = storageKey(handle);
+        return controllerConfigs.computeIfAbsent(key, k ->
+                JsonUtil.loadFromFile(controllerPath(k), ControllerConfig.class, ControllerConfig.defaults()));
     }
 
     public static void saveControllerConfig(long handle) {
-        Path path = controllerPath(handle);
-        JsonUtil.saveToFile(path, controllerConfigs.getOrDefault(handle, ControllerConfig.defaults()));
+        // getControllerConfig(), never getOrDefault(key, defaults()): see the note on storageKey().
+        JsonUtil.saveToFile(controllerPath(storageKey(handle)), getControllerConfig(handle));
     }
 
     public static BindingConfig getBindingConfig(long handle) {
-        return bindingConfigs.computeIfAbsent(handle, h -> {
-            Path path = bindingPath(h);
-            return JsonUtil.loadFromFile(path, BindingConfig.class, BindingConfig.defaults());
-        });
+        String key = storageKey(handle);
+        return bindingConfigs.computeIfAbsent(key, k ->
+                JsonUtil.loadFromFile(bindingPath(k), BindingConfig.class, BindingConfig.defaults()));
     }
 
     public static void saveBindingConfig(long handle) {
-        Path path = bindingPath(handle);
-        JsonUtil.saveToFile(path, bindingConfigs.getOrDefault(handle, BindingConfig.defaults()));
+        JsonUtil.saveToFile(bindingPath(storageKey(handle)), getBindingConfig(handle));
     }
 
     public static RadialConfig getRadialConfig(long handle) {
-        return radialConfigs.computeIfAbsent(handle, h -> {
-            Path path = radialPath(h);
-            return JsonUtil.loadFromFile(path, RadialConfig.class, RadialConfig.defaults());
-        });
+        String key = storageKey(handle);
+        return radialConfigs.computeIfAbsent(key, k ->
+                JsonUtil.loadFromFile(radialPath(k), RadialConfig.class, RadialConfig.defaults()));
     }
 
     public static void saveRadialConfig(long handle) {
-        Path path = radialPath(handle);
-        JsonUtil.saveToFile(path, radialConfigs.getOrDefault(handle, RadialConfig.defaults()));
+        JsonUtil.saveToFile(radialPath(storageKey(handle)), getRadialConfig(handle));
     }
 
     /** Persists all loaded configs to disk. */
     public static void saveAll() {
         saveGlobal();
-        controllerConfigs.keySet().forEach(ConfigManager::saveControllerConfig);
-        bindingConfigs.keySet().forEach(ConfigManager::saveBindingConfig);
-        radialConfigs.keySet().forEach(ConfigManager::saveRadialConfig);
+        controllerConfigs.forEach((k, v) -> JsonUtil.saveToFile(controllerPath(k), v));
+        bindingConfigs.forEach((k, v) -> JsonUtil.saveToFile(bindingPath(k), v));
+        radialConfigs.forEach((k, v) -> JsonUtil.saveToFile(radialPath(k), v));
     }
 
-    private static Path controllerPath(long handle) {
-        return CONTROLLERS_DIR.resolve("controller_" + handle + ".json");
-    }
-
-    private static Path bindingPath(long handle) {
-        return CONTROLLERS_DIR.resolve("bindings_" + handle + ".json");
-    }
-
-    private static Path radialPath(long handle) {
-        return CONTROLLERS_DIR.resolve("radial_" + handle + ".json");
-    }
-
-    // ---- Reconnect config migration ------------------------------------------------------------
+    // ---- Storage key ----------------------------------------------------------------------------
     //
-    // Bug (feedback: "cuando desconecto el gamepad... se desconfiguran los botones... tengo que
-    // reiniciar el juego"): every per-controller file above is keyed by the numeric HANDLE, but
-    // SDL3/GLFW hand out a NEW handle every time the SAME physical controller reconnects — confirmed
-    // on real hardware, consecutive session logs showed the identical 8BitDo pad go from handle
-    // ...386369 to ...386370 after a disconnect/reconnect. getControllerConfig/getBindingConfig/
-    // getRadialConfig had no way to know the new handle belonged to a pad they'd already configured,
-    // so a mid-session reconnect silently created blank defaults under the new handle — the user's
-    // real bindings were still on disk, just orphaned under the old handle's filename. A full game
-    // restart "fixed" it only by coincidence (SDL3 sometimes re-issues the earlier handle on a fresh
-    // enumeration). Fixed properly by tracking the last handle seen for each controller NAME (the one
-    // stable identifier across reconnects — the same one ActiveControllerService already trusts for
-    // restoring the "Default" controller) and copying that handle's saved files forward the moment a
-    // newly-connected handle with no config of its own shows up under a known name.
+    // Every per-controller file used to be named after the numeric HANDLE. That is the single root
+    // cause behind "cuando se conectan recuerdan otras configuraciones antiguas" and "cambiaba mis
+    // botones": SDL mints a new SDL_JoystickID per connection and restarts the counter each process,
+    // and GLFW hands out the first free slot — so the same pad is a different number every time, and
+    // the number it lands on may be the one the OTHER pad's file was written under. It also explains
+    // the user's own discriminating observation that launching with the pads ALREADY connected worked
+    // fine: enumerating at startup reproduces last session's id order, so the handles line up by
+    // coincidence. Files are now named after the persistent identity key (VID/PID, plus the serial
+    // when SDL can read one) — see dev.steampad.service.ControllerIdentity.
+
+    /** Identity key for a handle, or a handle-derived fallback while identity is unknown. */
+    private static String storageKey(long handle) {
+        String key = dev.steampad.service.ControllerIdentityService.keyFor(handle);
+        if (key.isEmpty()) {
+            // Not (yet) a connected controller — e.g. a config read during startup before the first
+            // poll, or a Steam Input handle. Keep the historical handle-named file so nothing that
+            // used to work stops working; the identity path takes over as soon as a poll resolves it.
+            return "h" + handle;
+        }
+        adoptLegacyFiles(key, handle);
+        promoteHandleKeyedEntries("h" + handle, key);
+        return key;
+    }
+
+    /**
+     * Moves any cache entry parked under the pre-identity {@code h<handle>} key onto the identity key.
+     *
+     * <p>This closes a silent config-loss window that only opened when a pad's identity resolved
+     * BETWEEN a read and its matching write — which is the normal state in Steam Game Mode, where Steam
+     * claims and releases pads continuously so {@code keyFor()} flips between "" and the real key many
+     * times per session (on a plain desktop launch identity resolves once, before the UI, so both sides
+     * always agreed and the bug stayed invisible). The getters cache under the key that was current at
+     * READ time, and the setters used to look the object up under the key current at WRITE time and,
+     * on a miss, write {@code defaults()} — so a user's freshly edited bindings were not merely "not
+     * saved", the real {@code bindings_<identity>.json} was overwritten with defaults. That is the
+     * reported "en modo Game Mode no guarda la configuración de botones".
+     *
+     * <p>{@code putIfAbsent}, never {@code put}: when the identity key already holds an object it was
+     * loaded from the pad's real file, whereas the handle-keyed one can be a defaults instance created
+     * by an early caller (e.g. the "Allow Vibration" lookup in {@code ControllerManager.rumble}). The
+     * real config always wins.
+     */
+    private static void promoteHandleKeyedEntries(String from, String to) {
+        if (from.equals(to)) return;
+        promote(controllerConfigs, from, to);
+        promote(bindingConfigs, from, to);
+        promote(radialConfigs, from, to);
+    }
+
+    private static <T> void promote(Map<String, T> cache, String from, String to) {
+        T pending = cache.remove(from);
+        if (pending != null) cache.putIfAbsent(to, pending);
+    }
+
+    private static Path controllerPath(String key) { return CONTROLLERS_DIR.resolve("controller_" + key + ".json"); }
+    private static Path bindingPath(String key)    { return CONTROLLERS_DIR.resolve("bindings_" + key + ".json"); }
+    private static Path radialPath(String key)     { return CONTROLLERS_DIR.resolve("radial_" + key + ".json"); }
+
+    private static Path legacyControllerPath(long h) { return CONTROLLERS_DIR.resolve("controller_" + h + ".json"); }
+    private static Path legacyBindingPath(long h)    { return CONTROLLERS_DIR.resolve("bindings_" + h + ".json"); }
+    private static Path legacyRadialPath(long h)     { return CONTROLLERS_DIR.resolve("radial_" + h + ".json"); }
+
+    /** Identity keys whose legacy adoption has already been attempted this session. */
+    private static final java.util.Set<String> legacyAdopted = new java.util.HashSet<>();
+
+    /**
+     * One-time upgrade path: copies a controller's pre-identity, handle-named files onto its new
+     * identity-named files the first time that identity is used.
+     *
+     * <p>Two places are searched for the old files, best first: the handle recorded in
+     * {@code name_index.json} for this controller's display name (what the old reconnect migration
+     * tracked, so it points at the most recently written set), then the handle the pad happens to
+     * carry right now. Never overwrites a file that already exists at the destination, so this can
+     * only ever ADD the user's old settings, never clobber newer ones.
+     */
+    private static void adoptLegacyFiles(String key, long handle) {
+        if (!legacyAdopted.add(key)) return;
+        if (Files.exists(controllerPath(key))) return;   // already migrated in an earlier session
+
+        String name = dev.steampad.service.ControllerIdentityService.nameFor(key);
+        long fromName = name.isEmpty() ? 0L : nameIndex().lastHandleByName.getOrDefault(name, 0L);
+        long recorded = dev.steampad.service.ControllerIdentityService.legacyHandle(key);
+
+        for (long old : new long[]{recorded, fromName, handle}) {
+            if (old == 0L) continue;
+            boolean any = copyIfExists(legacyControllerPath(old), controllerPath(key));
+            any |= copyIfExists(legacyBindingPath(old), bindingPath(key));
+            any |= copyIfExists(legacyRadialPath(old), radialPath(key));
+            if (any) {
+                dev.steampad.service.ControllerIdentityService.rememberLegacyHandle(key, old);
+                LogUtil.info("[SteamPad] Adopted pre-identity config for '{}' (handle={}) into identity "
+                        + "'{}' — bindings/radial/settings preserved across the upgrade.", name, old, key);
+                return;
+            }
+        }
+    }
+
+    // ---- Legacy name index (READ ONLY) ---------------------------------------------------------
+    //
+    // Written by the pre-identity reconnect migration, which tracked "last handle seen for each
+    // controller NAME" and copied files forward on every reconnect. That approach is gone: a name is
+    // not an identifier (two pads of one model share it; one pad reports different names on different
+    // backends/modes), so the migration could copy one pad's bindings on top of the other's, and with
+    // two identically-named pads it ping-ponged the index — and a disk write — on EVERY tick. The file
+    // is still READ, once, purely to find where a pre-upgrade user's real settings live so
+    // adoptLegacyFiles can bring them across. Nothing writes it any more.
 
     private static final Path NAME_INDEX_PATH = CONTROLLERS_DIR.resolve("name_index.json");
     private static NameIndexFile nameIndex;
@@ -135,29 +214,6 @@ public final class ConfigManager {
             if (nameIndex.lastHandleByName == null) nameIndex.lastHandleByName = new HashMap<>();
         }
         return nameIndex;
-    }
-
-    /** Call once per tick for every currently-detected controller (cheap no-op once a name's handle
-     *  is already up to date). Copies the previous handle's saved config files forward under the new
-     *  handle the first time a reconnect is detected for that name — never overwrites an existing
-     *  file at the destination, so it can never clobber a config the new handle already has. */
-    public static void migrateControllerConfigByName(long handle, String name) {
-        if (name == null || name.isEmpty()) return;
-        NameIndexFile idx = nameIndex();
-        Long oldHandle = idx.lastHandleByName.get(name);
-        if (oldHandle != null && oldHandle != handle) {
-            boolean migratedAny = copyIfExists(controllerPath(oldHandle), controllerPath(handle));
-            migratedAny |= copyIfExists(bindingPath(oldHandle), bindingPath(handle));
-            migratedAny |= copyIfExists(radialPath(oldHandle), radialPath(handle));
-            if (migratedAny) {
-                LogUtil.info("[SteamPad] Reconnect detected for '{}' — migrated saved config from "
-                        + "handle={} to handle={}.", name, oldHandle, handle);
-            }
-        }
-        if (oldHandle == null || oldHandle != handle) {
-            idx.lastHandleByName.put(name, handle);
-            JsonUtil.saveToFile(NAME_INDEX_PATH, idx);
-        }
     }
 
     // ---- Named config profiles -----------------------------------------------------------------
@@ -192,12 +248,13 @@ public final class ConfigManager {
         saveControllerConfig(handle);
         saveBindingConfig(handle);
         saveRadialConfig(handle);
+        String key = storageKey(handle);
         Path dir = PROFILES_DIR.resolve(safe);
         try {
             Files.createDirectories(dir);
-            Files.copy(controllerPath(handle), dir.resolve("controller.json"), StandardCopyOption.REPLACE_EXISTING);
-            Files.copy(bindingPath(handle), dir.resolve("bindings.json"), StandardCopyOption.REPLACE_EXISTING);
-            Files.copy(radialPath(handle), dir.resolve("radial.json"), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(controllerPath(key), dir.resolve("controller.json"), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(bindingPath(key), dir.resolve("bindings.json"), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(radialPath(key), dir.resolve("radial.json"), StandardCopyOption.REPLACE_EXISTING);
             return true;
         } catch (IOException e) {
             LogUtil.warn("[SteamPad] Could not save profile '{}': {}", safe, e.getMessage());
@@ -212,17 +269,18 @@ public final class ConfigManager {
         String safe = sanitizeProfileName(name);
         Path dir = PROFILES_DIR.resolve(safe);
         if (!Files.isDirectory(dir)) return false;
+        String key = storageKey(handle);
         try {
-            Files.copy(dir.resolve("controller.json"), controllerPath(handle), StandardCopyOption.REPLACE_EXISTING);
-            Files.copy(dir.resolve("bindings.json"), bindingPath(handle), StandardCopyOption.REPLACE_EXISTING);
-            Files.copy(dir.resolve("radial.json"), radialPath(handle), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(dir.resolve("controller.json"), controllerPath(key), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(dir.resolve("bindings.json"), bindingPath(key), StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(dir.resolve("radial.json"), radialPath(key), StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             LogUtil.warn("[SteamPad] Could not load profile '{}': {}", safe, e.getMessage());
             return false;
         }
-        controllerConfigs.remove(handle);
-        bindingConfigs.remove(handle);
-        radialConfigs.remove(handle);
+        controllerConfigs.remove(key);
+        bindingConfigs.remove(key);
+        radialConfigs.remove(key);
         return true;
     }
 

@@ -1,5 +1,6 @@
 package dev.steampad.client;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.input.GamepadMappings;
 import dev.steampad.input.InputBindingManager;
@@ -17,9 +18,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.resources.ResourceLocation;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -36,7 +36,7 @@ import org.lwjgl.glfw.GLFW;
  */
 public class SteamPadClient implements ClientModInitializer {
 
-    private static KeyBinding openMenuKey;
+    private static KeyMapping openMenuKey;
 
     /** Whether the one-time "controller is live" startup rumble has fired this session. */
     private static boolean startupRumbleDone = false;
@@ -53,8 +53,14 @@ public class SteamPadClient implements ClientModInitializer {
     // ones) were still hardcoded at the old, louder 0.45f/80ms and never got touched by earlier tuning
     // passes that only edited the very-first-activation call — from the player's seat "the vibration
     // when the controller connects" is one thing, not three independently-tuned ones.
-    private static final float CONNECT_RUMBLE_INTENSITY = 0.12f;
-    private static final int CONNECT_RUMBLE_MS = 15;
+    //
+    // Bumped this round (feedback: "es muy debil, subelo un poco mas") — 0.12/15ms was so faint and so
+    // brief (15ms is close to a single rumble frame) it read as barely-there even on hardware that
+    // handles the Haptics Test Screen's presets fine. Still deliberately far short of the 300ms
+    // "probar mando" test-vibration button (the "shorter than that" preference this round didn't
+    // touch) — just no longer at the very floor of what's perceptible at all.
+    private static final float CONNECT_RUMBLE_INTENSITY = 0.25f;
+    private static final int CONNECT_RUMBLE_MS = 60;
     // The unified 20 ms value STILL felt long in hardware ("la vibracion de inicio sigue siendo
     // larga") — with the number this small, the remaining suspect isn't the number: it's the driver
     // stack. SDL_RumbleGamepad's duration_ms is honored by SDL itself, but Steam's virtual gamepad
@@ -69,6 +75,12 @@ public class SteamPadClient implements ClientModInitializer {
     private static long rumbleStopHandle = 0L;
     private static long lastConnectRumbleMs = 0L;
     private static final long CONNECT_RUMBLE_COOLDOWN_MS = 3000;
+
+    /** GUI depth for the virtual cursor / keyboard / container-hint overlay layer. Above item stacks
+     *  (z 150) and above vanilla tooltips (z 400): these are input surfaces the player is actively
+     *  aiming at, so nothing the screen draws should ever cover them. Only meaningful on the versions
+     *  whose GUI transform still has a z — see {@link dev.steampad.compat.mc.GuiPose#pushOverlay}. */
+    private static final float OVERLAY_Z = 450f;
 
     /** The single entry point for every connect-feedback rumble: cooldown-gated + auto-stop. */
     private static void connectRumble(long handle) {
@@ -92,6 +104,27 @@ public class SteamPadClient implements ClientModInitializer {
     /** Handles connected on the previous tick, to detect hot-plug of the preferred controller (S8). */
     private static final java.util.Set<Long> prevConnected = new java.util.HashSet<>();
 
+    /** One-shot latch so "every pad is taken by another instance" is stated once, not every tick. */
+    private static boolean warnedNoFreeController = false;
+
+    /**
+     * First controller in {@code detected} this instance can actually take, claiming it in the process;
+     * null when none is available. {@code preferredOnly} restricts the search to the user's "Default".
+     *
+     * <p>Claims rather than merely testing: between an "is it free?" check and the matching activation
+     * there is a window in which a second instance can pass the same check, and both then drive the
+     * same physical pad. {@link ControllerClaimService#tryClaim} acquires atomically, so exactly one
+     * instance wins and the loser simply moves on to the next pad in the list.
+     */
+    private static dev.steampad.steam.SteamControllerHandleRef claimFirstAvailable(
+            java.util.List<dev.steampad.steam.SteamControllerHandleRef> detected, boolean preferredOnly) {
+        for (var r : detected) {
+            if (preferredOnly && !ActiveControllerService.isPreferred(r.handle)) continue;
+            if (ControllerClaimService.tryClaim(r.handle, detected)) return r;
+        }
+        return null;
+    }
+
     @Override
     public void onInitializeClient() {
         LogUtil.info("SteamPad client initializing...");
@@ -111,6 +144,12 @@ public class SteamPadClient implements ClientModInitializer {
         if (!ConfigManager.getGlobal().deployIgaManifest) {
             dev.steampad.steam.SteamControllerConfigDeployer.cleanupOurManifests();
         }
+
+        // 0.6 Entity Model Features compat: tell EMF to stand down on an entity SteamPad is emoting,
+        // so a Fresh Animations pack can't overwrite the dance. Registered at init because EMF's API
+        // takes a long-lived condition it evaluates itself per frame — nothing here runs per frame.
+        // Pure no-op when EMF isn't installed. See EmfCompat for the conflict it resolves.
+        dev.steampad.compat.EmfCompat.init();
 
         // 1. Load natives
         boolean nativesLoaded = false;
@@ -153,6 +192,20 @@ public class SteamPadClient implements ClientModInitializer {
                 (client, screen, scaledWidth, scaledHeight) ->
                         dev.steampad.client.window.WindowArrangeController.onFirstTick(client));
 
+        // 4.7 Aiming body-facing correction (point 5/D122) — registered on START_CLIENT_TICK
+        // DELIBERATELY, separate from every other tick-based dispatch below (which all run on
+        // END_CLIENT_TICK). Vanilla's own bow-release-and-fire processing happens inside
+        // MinecraftClient.tick()'s own body, before END_CLIENT_TICK fires — so a correction applied at
+        // END of tick N is only visible starting tick N+1, one tick after a release that happened
+        // during tick N would have already used it. Running this specific, narrow piece at START of
+        // tick N instead means a release later in that SAME tick sees this tick's fresh correction.
+        // See ThirdPersonCameraController.tickAimFacing's own doc for the full mechanism.
+        ClientTickEvents.START_CLIENT_TICK.register(mc -> {
+            if (mc.player != null && mc.level != null) {
+                dev.steampad.input.ThirdPersonCameraController.tickAimFacing(mc);
+            }
+        });
+
         // 5. Tick event: deferred backend init + Steam callbacks + input dispatch
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             long tProf = dev.steampad.util.TickProfiler.begin();
@@ -165,28 +218,32 @@ public class SteamPadClient implements ClientModInitializer {
             //    input dispatch stops cleanly),
             //  - auto-activate the first present controller when nothing is active, so the mod
             //    "just works" on connect without manual selection.
+            long tPoll = dev.steampad.util.TickProfiler.begin();
             var detected = ControllerManager.getConnectedControllers();
+            dev.steampad.util.TickProfiler.end(dev.steampad.util.TickProfiler.PAD_POLL, tPoll);
 
-            // Reconnect config migration (feedback: "cuando desconecto el gamepad... se desconfiguran
-            // los botones... tengo que reiniciar el juego"): SDL3/GLFW hand a NEW numeric handle to
-            // the SAME physical controller on every reconnect, but saved config files are keyed by
-            // that handle — without this, a reconnect silently fell back to blank defaults. Cheap
-            // no-op for controllers that were already connected last tick (see ConfigManager's doc).
-            for (var r : detected) {
-                if (!prevConnected.contains(r.handle)) {
-                    ConfigManager.migrateControllerConfigByName(r.handle, r.displayName);
-                }
-            }
+            // NOTE: there is no per-tick "reconnect config migration" any more. Per-controller config
+            // files are named after the pad's PERSISTENT IDENTITY (VID/PID, plus the serial when SDL
+            // can read one — see dev.steampad.service.ControllerIdentity), so a reconnect resolves to
+            // the same key and simply keeps using the same already-loaded config. The old code copied
+            // files forward keyed by DISPLAY NAME every time a handle changed, which both mixed up two
+            // pads of the same model and rewrote name_index.json on every tick when two of them were
+            // connected. ControllerManager.refreshCache() resolves identities as part of the poll.
 
             // S8: if the preferred ("Default") controller JUST connected, switch to it — even if another
             // controller is currently active. Edge-triggered (only on the tick it appears) so it doesn't
             // fight a deliberate manual selection while the default stays plugged in.
-            String preferredName = ConfigManager.getGlobal().preferredControllerName;
-            if (preferredName != null && !preferredName.isEmpty()) {
+            String preferredId = ConfigManager.getGlobal().preferredControllerId;
+            if (preferredId != null && !preferredId.isEmpty()) {
                 for (var r : detected) {
                     if (prevConnected.contains(r.handle)) continue;          // not newly connected
-                    if (!preferredName.equals(r.displayName)) continue;       // not the default
+                    if (!ActiveControllerService.isPreferred(r.handle)) continue;   // not the default
                     if (ActiveControllerService.getActiveHandle() == r.handle) continue;
+                    // Never steal a pad another live instance already holds — otherwise two instances
+                    // that share a "Default" both grab it the moment it appears (splitscreen). Claim
+                    // FIRST: a plain "is it free?" test leaves a window in which both instances answer
+                    // yes on the same tick and both activate it.
+                    if (!ControllerClaimService.tryClaim(r.handle, detected)) continue;
                     ActiveControllerService.setActive(r.handle);
                     if (startupRumbleDone) connectRumble(r.handle);
                     LogUtil.info("[SteamPad] Preferred controller connected — switched to {}.", r.displayName);
@@ -212,44 +269,49 @@ public class SteamPadClient implements ClientModInitializer {
                 active = 0L;
             }
             if (active == 0L && !detected.isEmpty()) {
-                // Prefer the remembered ("Default") controller if present AND not already held by
-                // another live instance; else the first UNCLAIMED controller; else (all claimed) the
-                // first — fail-open so the user is never left without a pad. This is what lets several
-                // instances each grab a distinct controller instead of all fighting over pad #0.
-                String preferred = ConfigManager.getGlobal().preferredControllerName;
-                final var detectedF = detected;
-                var chosen = detected.stream()
-                    .filter(r -> !preferred.isEmpty() && preferred.equals(r.displayName))
-                    .filter(r -> !ControllerClaimService.isClaimedByOther(r.handle, detectedF))
-                    .findFirst()
-                    .orElseGet(() -> detectedF.stream()
-                        .filter(r -> !ControllerClaimService.isClaimedByOther(r.handle, detectedF))
-                        .findFirst()
-                        .orElse(detectedF.get(0)));
-                ActiveControllerService.setActive(chosen.handle);
-                active = chosen.handle;
-                LogUtil.info("[SteamPad] Auto-activated controller: {} (source: {}).",
-                    chosen.displayName, ControllerManager.activeSource());
-                // Connection feedback for LATER hot-plugs: a brief, light rumble so the player feels
-                // the link. The very first activation at startup is handled by the startup-rumble
-                // block below (so a controller restored from config also vibrates, exactly once).
-                if (startupRumbleDone) connectRumble(chosen.handle);
+                // Prefer the remembered ("Default") controller, else the first pad we can actually
+                // CLAIM. Claiming is what makes several instances each end up on a distinct controller
+                // instead of all fighting over pad #0.
+                //
+                // There is deliberately no "if everything is claimed, take pad #0 anyway" fallback any
+                // more. That fallback could only ever fire when every connected pad was already held by
+                // another LIVE instance, and in that situation grabbing one is not fail-open, it is the
+                // bug: it put two instances on one physical pad, so every button pressed in one fired
+                // in the other too. A dead instance's claim still expires on its own (heartbeat TTL),
+                // so this cannot strand a single-instance session.
+                var chosen = claimFirstAvailable(detected, true);
+                if (chosen == null) chosen = claimFirstAvailable(detected, false);
+                if (chosen != null) {
+                    warnedNoFreeController = false;
+                    ActiveControllerService.setActive(chosen.handle);
+                    active = chosen.handle;
+                    LogUtil.info("[SteamPad] Auto-activated controller: {} (handle={}, source: {}).",
+                        chosen.displayName, chosen.handle, ControllerManager.activeSource());
+                    // Connection feedback for LATER hot-plugs: a brief, light rumble so the player feels
+                    // the link. The very first activation at startup is handled by the startup-rumble
+                    // block below (so a controller restored from config also vibrates, exactly once).
+                    if (startupRumbleDone) connectRumble(chosen.handle);
+                } else if (!warnedNoFreeController) {
+                    warnedNoFreeController = true;
+                    LogUtil.info("[SteamPad] Every connected controller ({}) is in use by another "
+                        + "Minecraft instance — none activated here. Free one there, or connect another "
+                        + "pad; this instance picks it up automatically.", detected.size());
+                }
             }
 
-            // Cross-instance claim upkeep: if the active controller is already held by another live
-            // instance (e.g. a restore-by-name collision), drop it so the next tick auto-selects a
-            // free one; otherwise hold + heartbeat our claim so other instances steer clear.
+            // Cross-instance claim upkeep: heartbeat our claim so other instances steer clear, and drop
+            // the controller if we no longer own it (another instance won a same-tick race for it).
             long claimActive = ActiveControllerService.getActiveHandle();
+            long tClaim = dev.steampad.util.TickProfiler.begin();
             if (claimActive != 0L) {
-                if (ControllerClaimService.isClaimedByOther(claimActive, detected)) {
+                if (!ControllerClaimService.ensureClaim(claimActive, detected)) {
                     ActiveControllerService.clearActive();
                     active = 0L;
-                } else {
-                    ControllerClaimService.ensureClaim(claimActive, detected);
                 }
             } else {
                 ControllerClaimService.release();
             }
+            dev.steampad.util.TickProfiler.end(dev.steampad.util.TickProfiler.CLAIM_IO, tClaim);
 
             // Startup vibration: once a controller is active for the first time this session — whether
             // restored from config (the "default") or auto-activated — give a clear rumble so the
@@ -308,7 +370,7 @@ public class SteamPadClient implements ClientModInitializer {
                 // controller settles active, using whichever handle is actually active right now.
                 long onboardingHandle = ActiveControllerService.getActiveHandle();
                 if (onboardingHandle != 0L && !ConfigManager.getGlobal().hasSeenOnboarding
-                        && mc.currentScreen == null) {
+                        && mc.screen == null) {
                     mc.setScreen(new dev.steampad.screen.OnboardingScreen(null, onboardingHandle));
                 }
             }
@@ -320,6 +382,26 @@ public class SteamPadClient implements ClientModInitializer {
             dev.steampad.haptics.HapticsController.tick(mc);
             dev.steampad.util.TickProfiler.end(dev.steampad.util.TickProfiler.HAPTICS, tHap);
             dev.steampad.emote.EmoteAnimator.clientTick(mc);   // cancel-on-move + prune (FASE 63)
+            // Auto third person on mount / first person on dismount (configurable) - same
+            // detect-transition-then-ease shape as EmoteAnimator above, sharing PerspectiveTransition.
+            dev.steampad.input.MountPerspectiveController.clientTick(mc);
+            // Records where the player died, for the radial's "volver a donde morí" smart command.
+            dev.steampad.service.DeathLocationService.clientTick(mc);
+            // Gliders' own "Glider Perspective" option cannot persist (it is a bare static
+            // OptionInstance the mod never saves) — turn it back on once per world if the user asked.
+            // Two boolean reads per tick once it has run or been ruled out; see GlidersCompat.
+            dev.steampad.compat.GlidersCompat.clientTick(mc);
+            // Takes over / gives back vanilla's hideGui while the cinematic bars are closed. On the
+            // TICK, not the render frame, so the restore still runs on the tick the bars retract even
+            // if that frame never renders — otherwise the HUD could be left hidden for good.
+            dev.steampad.input.ZoomController.tickCinematicHud(mc);
+            // Completes any running perspective ease (incl. the delayed 3rd→1st flip) — D123.
+            dev.steampad.input.PerspectiveTransition.tick(mc);
+            // Advances the free camera's smoothed follow point by exactly one tick. MUST run here
+            // (client tick), not in the render frame — that split is what removes the walking
+            // stutter. Registered unconditionally so it also covers mouse/keyboard play; it no-ops
+            // when free-look is off. See ThirdPersonCameraController.clientTick (D116).
+            dev.steampad.input.ThirdPersonCameraController.clientTick(mc);
 
             // Close radial when button released
             if (RadialMenuController.isOpen()) {
@@ -347,8 +429,9 @@ public class SteamPadClient implements ClientModInitializer {
             long tCam = dev.steampad.util.TickProfiler.begin();
             dev.steampad.input.CameraController.frame();
             dev.steampad.util.TickProfiler.end(dev.steampad.util.TickProfiler.CAMERA_FRAME, tCam);
-            RadialMenuOverlay.render(drawContext, tickDelta.getTickProgress(true));
-            dev.steampad.emote.EmoteWheelOverlay.render(drawContext, tickDelta.getTickProgress(true));
+            RadialMenuOverlay.render(drawContext, tickDelta.getGameTimeDeltaPartialTick(true));
+            dev.steampad.emote.EmoteWheelOverlay.render(drawContext, tickDelta.getGameTimeDeltaPartialTick(true));
+            dev.steampad.itemradial.ItemRadialOverlay.render(drawContext, tickDelta.getGameTimeDeltaPartialTick(true));
             dev.steampad.client.hud.GameplayHudOverlay.render(drawContext);
             dev.steampad.input.ZoomController.renderCinematicBars(drawContext);
         });
@@ -356,15 +439,28 @@ public class SteamPadClient implements ClientModInitializer {
         // 6.5 Draw the controller cursor + Bedrock-style container hints on top of every screen.
         net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.AFTER_INIT.register((cl, screen, w, h) ->
             net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.afterRender(screen).register((scr, ctx, mx, my, td) -> {
-                dev.steampad.client.ui.VirtualCursorRenderer.render(ctx);
-                dev.steampad.client.ui.VirtualKeyboardRenderer.render(ctx);
-                long h2 = ActiveControllerService.getActiveHandle();
-                if (h2 != 0L && ControllerManager.isFallbackHandle(h2)
-                        && scr instanceof net.minecraft.client.gui.screen.ingame.HandledScreen
-                        && ConfigManager.getControllerConfig(h2).showScreenButtonGuide) {
-                    var t = ActiveControllerService.getActiveRef()
-                        .map(r -> r.type).orElse(dev.steampad.steam.SteamControllerHandleRef.ControllerType.GENERIC);
-                    dev.steampad.client.hud.GameplayHudOverlay.renderContainerHints(ctx, t);
+                // Everything here is a true overlay: it must sit above the screen's own content,
+                // INCLUDING item stacks, which on the pre-Blaze3D-rewrite versions are drawn at a
+                // raised z and would otherwise punch through (inventory icons over the keyboard/
+                // cursor). See GuiPose.pushOverlay for the mechanism; it's a plain push on the
+                // versions where draw order alone already decides what's on top.
+                dev.steampad.compat.mc.GuiPose.pushOverlay(ctx, OVERLAY_Z);
+                try {
+                    dev.steampad.client.ui.VirtualCursorRenderer.render(ctx);
+                    dev.steampad.client.ui.VirtualKeyboardRenderer.render(ctx);
+                    long h2 = ActiveControllerService.getActiveHandle();
+                    if (h2 != 0L && ControllerManager.isFallbackHandle(h2)
+                            && ConfigManager.getControllerConfig(h2).showScreenButtonGuide) {
+                        var t = ActiveControllerService.getActiveRef()
+                            .map(r -> r.type).orElse(dev.steampad.steam.SteamControllerHandleRef.ControllerType.GENERIC);
+                        if (scr instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen) {
+                            dev.steampad.client.hud.GameplayHudOverlay.renderContainerHints(ctx, t);
+                        }
+                    }
+                } finally {
+                    // finally: a throw from any renderer must not leave the GUI transform unbalanced,
+                    // which would corrupt every later screen draw rather than just this overlay.
+                    dev.steampad.compat.mc.GuiPose.popOverlay(ctx);
                 }
             }));
 
@@ -375,8 +471,8 @@ public class SteamPadClient implements ClientModInitializer {
         openMenuKey = KeyBindingHelper.registerKeyBinding(createOpenMenuKeyBinding());
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
-            while (openMenuKey.wasPressed()) {
-                mc.setScreen(new ControllerSelectScreen(mc.currentScreen));
+            while (openMenuKey.consumeClick()) {
+                mc.setScreen(new ControllerSelectScreen(mc.screen));
             }
         });
 
@@ -388,7 +484,7 @@ public class SteamPadClient implements ClientModInitializer {
                 (player, world, hand, hitResult) -> {
                     dev.steampad.haptics.HapticsController.onBlockUsed(
                             hitResult.getBlockPos(), world.getBlockState(hitResult.getBlockPos()));
-                    return net.minecraft.util.ActionResult.PASS;   // observe only, never intercept
+                    return net.minecraft.world.InteractionResult.PASS;   // observe only, never intercept
                 });
 
         LogUtil.info("SteamPad client initialized. Steam available: {}, Input available: {}",
@@ -445,12 +541,24 @@ public class SteamPadClient implements ClientModInitializer {
      * MC 1.21.10: KeyBinding(String, InputUtil.Type, int, KeyBinding.Category).
      * The category is the project's own, created via KeyBinding.Category.create(Identifier).
      */
-    private static KeyBinding createOpenMenuKeyBinding() {
-        KeyBinding.Category category = KeyBinding.Category.create(Identifier.of("steampad", "main"));
-        return new KeyBinding(
+    private static KeyMapping createOpenMenuKeyBinding() {
+        // Keybind categories became a registered KeyMapping.Category object in 1.21.9; before that they
+        // were a plain translation-key String. Both resolve to the same "SteamPad" heading in Controls,
+        // via the key.categories.steampad lang entry.
+        //? if >=1.21.9 {
+        KeyMapping.Category category = KeyMapping.Category.register(
+                ResourceLocation.fromNamespaceAndPath("steampad", "main"));
+        return new KeyMapping(
             "key.steampad.open_menu",
-            InputUtil.Type.KEYSYM,
+            InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_UNKNOWN,
             category);
+        //?} else {
+        /*return new KeyMapping(
+            "key.steampad.open_menu",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_UNKNOWN,
+            "key.categories.steampad");
+        *///?}
     }
 }

@@ -1,13 +1,11 @@
 package dev.steampad.input;
 
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.Element;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.input.MouseInput;
-
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.Screen;
+import dev.steampad.compat.mc.InputEventCompat;
 
 /**
  * Console-style (Bedrock-like) focus navigation for any {@link Screen}, driven by the controller:
@@ -23,10 +21,10 @@ public final class GuiFocusNavigator {
 
     private GuiFocusNavigator() {}
 
-    private static List<ClickableWidget> navigables(Screen s) {
-        List<ClickableWidget> out = new ArrayList<>();
-        for (Element e : s.children()) {
-            if (e instanceof ClickableWidget w && w.visible && w.active) out.add(w);
+    private static List<AbstractWidget> navigables(Screen s) {
+        List<AbstractWidget> out = new ArrayList<>();
+        for (GuiEventListener e : s.children()) {
+            if (e instanceof AbstractWidget w && w.visible && w.active) out.add(w);
         }
         // Widgets a mod owns but never registered in children() — REI's search bar and similar
         // Architectury-based overlays (see ExternalWidgetScanner). Without these the D-pad can never
@@ -55,19 +53,19 @@ public final class GuiFocusNavigator {
      * above/below — only past the first/last entry does focus leave the list (the D17 "brinca" fix).
      */
     public static void moveDir(Screen s, int dx, int dy) {
-        Element focused = s.getFocused();
+        GuiEventListener focused = s.getFocused();
 
         // Inside an entry list: step the selection entry-by-entry; leave only at the edges.
-        if (dy != 0 && focused instanceof net.minecraft.client.gui.widget.EntryListWidget<?> list
+        if (dy != 0 && focused instanceof net.minecraft.client.gui.components.AbstractSelectionList<?> list
                 && moveListSelection(list, dy)) {
             return;
         }
 
-        List<ClickableWidget> ws = navigables(s);
+        List<AbstractWidget> ws = navigables(s);
         if (ws.isEmpty()) return;
 
-        ClickableWidget cur = focused instanceof ClickableWidget c ? c : null;
-        ClickableWidget target;
+        AbstractWidget cur = focused instanceof AbstractWidget c ? c : null;
+        AbstractWidget target;
         if (cur == null) {
             target = ws.get(0);
         } else {
@@ -79,8 +77,8 @@ public final class GuiFocusNavigator {
         s.setFocused(target);
         target.setFocused(true);
         // Entering a list from outside: make sure something is selected so the highlight is visible.
-        if (target instanceof net.minecraft.client.gui.widget.EntryListWidget<?> list
-                && list.getSelectedOrNull() == null) {
+        if (target instanceof net.minecraft.client.gui.components.AbstractSelectionList<?> list
+                && list.getSelected() == null) {
             moveListSelection(list, dy >= 0 ? 1 : -1);
         }
         dev.steampad.input.VirtualMouseController.setPosition(
@@ -92,25 +90,44 @@ public final class GuiFocusNavigator {
      * (or when empty) so the caller can move focus out of the list instead.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static boolean moveListSelection(net.minecraft.client.gui.widget.EntryListWidget list, int dy) {
+    private static boolean moveListSelection(net.minecraft.client.gui.components.AbstractSelectionList list, int dy) {
         List entries = list.children();
         if (entries.isEmpty()) return false;
-        Object sel = list.getSelectedOrNull();
+        Object sel = list.getSelected();
         int idx = sel == null ? -1 : entries.indexOf(sel);
         int next = (idx == -1) ? (dy > 0 ? 0 : entries.size() - 1) : idx + dy;
         if (next < 0 || next >= entries.size()) return false;
+
         Object entry = entries.get(next);
-        // setFocused(entry) selects the entry (AlwaysSelected lists follow focus) and scrolls it
-        // into view in vanilla; the Entry type itself is protected, so it can't be named here.
-        list.setFocused((Element) entry);
+        // setFocused(entry) is what actually SELECTS the entry (AlwaysSelected lists follow focus);
+        // the Entry type itself is protected, so it can't be named here.
+        //
+        // Do NOT replace this with a synthetic UP/DOWN key event: AbstractSelectionList has no
+        // keyPressed method at all (verified with javap on both mapped jars), so such an event is
+        // silently dropped and the list stops responding entirely — that regression is exactly what
+        // broke world selection in v0.87.0 ("ya no selecciona mundo, pasa directo a los menús").
+        list.setFocused((GuiEventListener) entry);
+
+        // ...but setFocused only scrolls the list into view when vanilla thinks the last input came
+        // from a KEYBOARD (1.21.1), and never scrolls at all on 1.21.10 — see
+        // AbstractSelectionListInvoker's doc for the disassembly. SteamPad drives a virtual mouse, so
+        // that check is always false on a pad. Ask vanilla to scroll explicitly instead, which is the
+        // piece that was genuinely missing ("visualmente no baja la lista, solo la selección").
+        // Defensive: a mod-supplied list subclass could in principle not carry our mixin.
+        try {
+            if (list instanceof dev.steampad.mixin.AbstractSelectionListInvoker inv
+                    && entry instanceof net.minecraft.client.gui.components.AbstractSelectionList.Entry<?> e) {
+                inv.steampad$scrollToEntry(e);
+            }
+        } catch (Throwable ignored) {}
         return true;
     }
 
-    private static ClickableWidget pickDirectional(List<ClickableWidget> ws, ClickableWidget cur, int dx, int dy) {
+    private static AbstractWidget pickDirectional(List<AbstractWidget> ws, AbstractWidget cur, int dx, int dy) {
         double curX = cur.getX() + cur.getWidth() / 2.0, curY = cur.getY() + cur.getHeight() / 2.0;
-        ClickableWidget best = null;
+        AbstractWidget best = null;
         double bestScore = Double.MAX_VALUE;
-        for (ClickableWidget w : ws) {
+        for (AbstractWidget w : ws) {
             if (w == cur) continue;
             double ddx = (w.getX() + w.getWidth() / 2.0) - curX;
             double ddy = (w.getY() + w.getHeight() / 2.0) - curY;
@@ -134,16 +151,16 @@ public final class GuiFocusNavigator {
         // (server list, resource packs, …) keep the direct-Enter join/connect behavior. The virtual
         // mouse never routes through this method's list branch, so a mouse click on an entry still
         // enters directly via vanilla's own click path, exactly as requested.
-        if (s instanceof net.minecraft.client.gui.screen.world.SelectWorldScreen
-                && s.getFocused() instanceof net.minecraft.client.gui.widget.EntryListWidget<?> worldList
-                && worldList.getSelectedOrNull() != null) {
+        if (s instanceof net.minecraft.client.gui.screens.worldselection.SelectWorldScreen
+                && s.getFocused() instanceof net.minecraft.client.gui.components.AbstractSelectionList<?> worldList
+                && worldList.getSelected() != null) {
             // Land specifically on "Play Selected World" (vanilla key selectWorld.select), not
             // whatever button happens to sit geometrically closest — the nearest one turned out to be
             // Delete, which the user flagged as dangerous ("me manda directo a Borrar... para prevenir
             // accidentalmente borrar el mundo"). Falls back to the old geometric pick only if that
             // button can't be found at all (unexpected layout), so this never silently does nothing.
-            List<ClickableWidget> ws = navigables(s);
-            ClickableWidget target = findByMessage(ws, "selectWorld.select");
+            List<AbstractWidget> ws = navigables(s);
+            AbstractWidget target = findByMessage(ws, "selectWorld.select");
             if (target == null) target = pickDirectional(ws, worldList, 0, 1);
             if (target != null) {
                 worldList.setFocused(false);
@@ -158,22 +175,21 @@ public final class GuiFocusNavigator {
 
         // Entry lists: A confirms the SELECTED entry via a synthetic Enter (vanilla's confirm path) —
         // a center click would hit whatever row happens to sit at the widget's center.
-        if (s.getFocused() instanceof net.minecraft.client.gui.widget.EntryListWidget<?> list
-                && list.getSelectedOrNull() != null) {
+        if (s.getFocused() instanceof net.minecraft.client.gui.components.AbstractSelectionList<?> list
+                && list.getSelected() != null) {
             int scancode = 0;
             try {
                 int sc = org.lwjgl.glfw.GLFW.glfwGetKeyScancode(org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER);
                 if (sc > 0) scancode = sc;
             } catch (Throwable ignored) {}
-            s.keyPressed(new net.minecraft.client.input.KeyInput(
-                    org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER, scancode, 0));
+            InputEventCompat.keyPressed(s, org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER, scancode, 0);
             return true;
         }
-        if (s.getFocused() instanceof ClickableWidget w) {
+        if (s.getFocused() instanceof AbstractWidget w) {
             double cx = w.getX() + w.getWidth() / 2.0;
             double cy = w.getY() + w.getHeight() / 2.0;
             if (isChildOf(s, w)) {
-                w.mouseClicked(new Click(cx, cy, new MouseInput(0, 0)), false);
+                InputEventCompat.mouseClicked(w, cx, cy, 0);
             } else {
                 // Mod-owned widget outside children() (e.g. REI's search bar): a direct mouseClicked()
                 // call would bypass whatever event system the mod uses to learn about clicks (the same
@@ -189,8 +205,8 @@ public final class GuiFocusNavigator {
         return false;
     }
 
-    private static boolean isChildOf(Screen s, ClickableWidget w) {
-        for (Element e : s.children()) {
+    private static boolean isChildOf(Screen s, AbstractWidget w) {
+        for (GuiEventListener e : s.children()) {
             if (e == w) return true;
         }
         return false;
@@ -198,7 +214,7 @@ public final class GuiFocusNavigator {
 
     /** True if some widget currently holds focus. */
     public static boolean hasFocus(Screen s) {
-        return s.getFocused() instanceof ClickableWidget;
+        return s.getFocused() instanceof AbstractWidget;
     }
 
     /**
@@ -206,9 +222,9 @@ public final class GuiFocusNavigator {
      * current locale on both sides so this works regardless of display language. Used instead of
      * geometric picking when a SPECIFIC button matters (see {@link #activate} World Select branch).
      */
-    private static ClickableWidget findByMessage(List<ClickableWidget> ws, String translationKey) {
-        String want = net.minecraft.text.Text.translatable(translationKey).getString();
-        for (ClickableWidget w : ws) {
+    private static AbstractWidget findByMessage(List<AbstractWidget> ws, String translationKey) {
+        String want = net.minecraft.network.chat.Component.translatable(translationKey).getString();
+        for (AbstractWidget w : ws) {
             if (want.equals(w.getMessage().getString())) return w;
         }
         return null;

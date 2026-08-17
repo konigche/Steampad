@@ -28,10 +28,18 @@ public final class TickProfiler {
     public static final int KEYBOARD_DRAW = 5;   // VirtualKeyboardRenderer.render
     public static final int CLIENT_TICK   = 6;   // whole SteamPad END_CLIENT_TICK body
     public static final int CURSOR_RENDER = 7;   // VirtualCursorRenderer.render (frameUpdate + draw)
-    private static final int SECTIONS = 8;
+    // Added after the first real audit of the numbers above: clientTick was ~26× the sum of every
+    // section nested inside it, i.e. almost all of SteamPad's tick cost was in code no section
+    // covered. These two are the only non-trivial work left in that body — the cross-instance claim
+    // (the mod's ONLY per-tick filesystem I/O) and the backend controller poll (native JNA/GLFW).
+    // Instrumented rather than assumed, per B076's own rule.
+    public static final int CLAIM_IO      = 8;   // ControllerClaimService.ensureClaim/release
+    public static final int PAD_POLL      = 9;   // ControllerManager.getConnectedControllers
+    private static final int SECTIONS = 10;
 
     private static final String[] NAMES = {
-            "slots", "padTick", "haptics", "cameraFrame", "widgetScan", "kbDraw", "clientTick", "cursorRender"};
+            "slots", "padTick", "haptics", "cameraFrame", "widgetScan", "kbDraw", "clientTick",
+            "cursorRender", "claimIO", "padPoll"};
 
     /** Over ~2 ms of SteamPad work per second, the breakdown is worth a log line. */
     private static final long QUIET_BUDGET_NANOS_PER_SEC = 2_000_000L;
@@ -73,8 +81,13 @@ public final class TickProfiler {
         long elapsed = now - windowStartNanos;
         if (elapsed < WINDOW_NANOS) return;
 
-        long total = 0;
-        for (int i = 0; i < SECTIONS; i++) total += totalNanos.get(i);
+        // Sum only the sections that DON'T nest inside another one, or the total is meaningless:
+        // slots/padTick/haptics/widgetScan/claimIO/padPoll all run inside the CLIENT_TICK body and were
+        // being counted twice, which both inflated the number the user reads and made the log threshold
+        // trip early. CLIENT_TICK covers the whole tick; the three render-frame sections are the only
+        // work that happens outside it.
+        long total = totalNanos.get(CLIENT_TICK) + totalNanos.get(CAMERA_FRAME)
+                + totalNanos.get(KEYBOARD_DRAW) + totalNanos.get(CURSOR_RENDER);
         StringBuilder sb = new StringBuilder("(")
                 .append(elapsed / 1_000_000_000L).append("s window, total ")
                 .append(total / 1_000_000L).append("ms):");

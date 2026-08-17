@@ -73,6 +73,13 @@ class EmoteJsonParserTest {
     void axisSemanticsMatchReference() {
         assertEquals(-5f, EmoteData.defaultValue(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.X), 1e-6);
         assertEquals(12f, EmoteData.defaultValue(EmoteData.Part.LEFT_LEG, EmoteData.Axis.Y), 1e-6);
+        // D107: BEND_DIRECTION/BEND_AMOUNT must default to 0f on every part, including legs — found by
+        // numerically cross-checking against the real MIT reference (KeyframeAnimationPlayer), where a
+        // leg's bend axis fell into RIGHT_LEG/LEFT_LEG's 0.1f Z-position default before this fix.
+        for (EmoteData.Part p : EmoteData.Part.values()) {
+            assertEquals(0f, EmoteData.defaultValue(p, EmoteData.Axis.BEND_DIRECTION), 1e-6, p + " bendDir default");
+            assertEquals(0f, EmoteData.defaultValue(p, EmoteData.Axis.BEND_AMOUNT), 1e-6, p + " bendAmount default");
+        }
         EmoteData d = new EmoteData("t", "t", "", "", false, 0, 20, 23, 0);
         d.addKeyframe(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.X, 10f, -3f, Easing.LINEAR);
         assertEquals(7.7f, d.sampleAxis(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.Y, 10f, false, 7.7f),
@@ -101,5 +108,49 @@ class EmoteJsonParserTest {
         assertEquals(Easing.INOUTBOUNCE, Easing.fromId((byte) 35));
         assertEquals(Easing.STEP, Easing.fromId((byte) 37));
         assertEquals(Easing.LINEAR, Easing.fromId((byte) 99), "unknown id falls back to linear");
+    }
+
+    /**
+     * D110 — the fix for "sitting emotes float in the air". {@code body} is the WHOLE-MODEL transform
+     * (applied to the render matrix stack, in block units); {@code torso} is the body BONE. They were
+     * merged into one channel until v0.70.0, so an emote authored to physically lower the character
+     * onto the floor instead just rotated its torso while it stayed standing at full height.
+     *
+     * <p>The version rule is the reference's own ({@code AnimationJson}:
+     * {@code if(version < 3 && name.equals("torso")) name = "body";}) — a pre-v3 file's "torso" block
+     * really carries whole-model data. Every bundled emote (and, judging by them, most community
+     * files) omits {@code version} entirely, so this path is the common one, not an edge case.
+     */
+    @Test
+    void bodyIsTheWholeModelChannelAndTorsoIsTheBone() throws Exception {
+        // No "version" declared => version 1 => "torso" IS the whole-model channel.
+        EmoteData legacy = parseInline("""
+            {"name":"legacy","emote":{"beginTick":0,"endTick":20,"stopTick":21,"degrees":false,
+             "moves":[{"tick":10,"easing":"LINEAR","torso":{"y":-0.5,"pitch":1.2}}]}}""");
+        assertTrue(legacy.animates(EmoteData.Part.BODY),
+                "a pre-v3 \"torso\" block carries whole-model data — this is what drops a sitting "
+                        + "character to the floor");
+        assertEquals(-0.5f, legacy.sample(EmoteData.Part.BODY, EmoteData.Axis.Y, 10f), 1e-4);
+        assertEquals(1.2f, legacy.sample(EmoteData.Part.BODY, EmoteData.Axis.PITCH, 10f), 1e-4);
+        assertFalse(legacy.animates(EmoteData.Part.TORSO),
+                "it must NOT also land on the torso bone — applying it there was the bug");
+
+        // "version": 3 => modern split, both channels taken literally and kept apart.
+        EmoteData modern = parseInline("""
+            {"name":"modern","version":3,"emote":{"beginTick":0,"endTick":20,"stopTick":21,
+             "degrees":false,"moves":[{"tick":10,"easing":"LINEAR","torso":{"pitch":0.4},
+             "body":{"y":-0.5}}]}}""");
+        assertEquals(0.4f, modern.sample(EmoteData.Part.TORSO, EmoteData.Axis.PITCH, 10f), 1e-4,
+                "v3 keeps torso as the bone");
+        assertEquals(-0.5f, modern.sample(EmoteData.Part.BODY, EmoteData.Axis.Y, 10f), 1e-4,
+                "v3 keeps body as the whole-model channel");
+        assertFalse(modern.animates(EmoteData.Part.TORSO) && modern.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.Y),
+                "the two channels must stay independent");
+    }
+
+    private static EmoteData parseInline(String json) {
+        EmoteData d = EmoteJsonParser.parse("inline", new java.io.StringReader(json));
+        assertNotNull(d, "inline test emote failed to parse");
+        return d;
     }
 }

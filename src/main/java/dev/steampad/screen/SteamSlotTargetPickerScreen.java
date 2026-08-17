@@ -2,18 +2,17 @@ package dev.steampad.screen;
 
 import dev.steampad.input.GamepadBinds;
 import dev.steampad.input.SteamSlotDispatcher;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Searchable list of every assignable Steam Input slot target: SteamPad's own internal actions
@@ -31,10 +30,10 @@ public class SteamSlotTargetPickerScreen extends SteamPadBaseScreen {
 
     private final Screen parent;
     private final Consumer<String> onSelect;
-    private TextFieldWidget search;
+    private EditBox search;
 
     public SteamSlotTargetPickerScreen(Screen parent, Consumer<String> onSelect) {
-        super(Text.translatable("steampad.slot.pick_target"));
+        super(Component.translatable("steampad.slot.pick_target"));
         this.parent = parent;
         this.onSelect = onSelect;
     }
@@ -48,63 +47,63 @@ public class SteamSlotTargetPickerScreen extends SteamPadBaseScreen {
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
-        search = new TextFieldWidget(this.textRenderer, x, HEADER_H + 8, w, 18,
-                Text.translatable("steampad.radial.search"));
-        search.setChangedListener(t -> rebuild());
-        addDrawableChild(search);
+        search = new EditBox(this.font, x, HEADER_H + 8, w, 18,
+                Component.translatable("steampad.radial.search"));
+        search.setResponder(t -> rebuild());
+        addRenderableWidget(search);
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
         rebuild();
     }
 
     private void rebuild() {
-        this.clearChildren();
+        this.clearWidgets();
         resetScroll();
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
-        addDrawableChild(search);
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(search);
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
-        String q = search.getText().toLowerCase(Locale.ROOT).trim();
+        String q = search.getValue().toLowerCase(Locale.ROOT).trim();
         int y = contentTop();
 
         List<GamepadBinds.Bind> binds = new ArrayList<>();
         for (GamepadBinds.Bind b : GamepadBinds.Bind.values()) {
-            String name = Text.translatable(b.labelKey).getString().toLowerCase(Locale.ROOT);
+            String name = Component.translatable(b.labelKey).getString().toLowerCase(Locale.ROOT);
             if (q.isEmpty() || name.contains(q)) binds.add(b);
         }
         if (!binds.isEmpty()) {
-            y = addHeader(Text.translatable("steampad.slot.section.steampad"), x, y, w);
+            y = addHeader(Component.translatable("steampad.slot.section.steampad"), x, y, w);
             for (GamepadBinds.Bind b : binds) {
                 String target = SteamSlotDispatcher.encodeBind(b);
-                ButtonWidget row = ButtonWidget.builder(Text.translatable(b.labelKey),
-                        btn -> { onSelect.accept(target); close(); }).dimensions(x, y, w, 20).build();
+                Button row = Button.builder(Component.translatable(b.labelKey),
+                        btn -> { onSelect.accept(target); onClose(); }).bounds(x, y, w, 20).build();
                 addScroll(row, y);
                 y += ROW_H;
             }
         }
 
-        List<KeyBinding> matches = new ArrayList<>();
-        for (KeyBinding kb : client.options.allKeys) {
-            String name = Text.translatable(kb.getId()).getString().toLowerCase(Locale.ROOT);
-            if (q.isEmpty() || name.contains(q) || kb.getId().toLowerCase(Locale.ROOT).contains(q)) {
+        List<KeyMapping> matches = new ArrayList<>();
+        for (KeyMapping kb : minecraft.options.keyMappings) {
+            String name = Component.translatable(kb.getName()).getString().toLowerCase(Locale.ROOT);
+            if (q.isEmpty() || name.contains(q) || kb.getName().toLowerCase(Locale.ROOT).contains(q)) {
                 matches.add(kb);
             }
         }
-        matches.sort((a, b) -> Text.translatable(a.getId()).getString()
-                .compareToIgnoreCase(Text.translatable(b.getId()).getString()));
+        matches.sort((a, b) -> Component.translatable(a.getName()).getString()
+                .compareToIgnoreCase(Component.translatable(b.getName()).getString()));
         if (!matches.isEmpty()) {
-            y = addHeader(Text.translatable("steampad.slot.section.keybinds"), x, y, w);
-            for (KeyBinding kb : matches) {
-                String id = kb.getId();
-                Text label = Text.translatable(id).copy()
-                        .append("  [").append(kb.getBoundKeyLocalizedText()).append("]");
-                ButtonWidget row = ButtonWidget.builder(label, b -> { onSelect.accept(id); close(); })
-                        .dimensions(x, y, w, 20).build();
+            y = addHeader(Component.translatable("steampad.slot.section.keybinds"), x, y, w);
+            for (KeyMapping kb : matches) {
+                String id = kb.getName();
+                Component label = Component.translatable(id).copy()
+                        .append("  [").append(kb.getTranslatedKeyMessage()).append("]");
+                Button row = Button.builder(label, b -> { onSelect.accept(id); onClose(); })
+                        .bounds(x, y, w, 20).build();
                 addScroll(row, y);
                 y += ROW_H;
             }
@@ -117,20 +116,20 @@ public class SteamSlotTargetPickerScreen extends SteamPadBaseScreen {
 
     /** A non-interactive section divider — a disabled button, so it scrolls with the real rows without
      *  any custom header-position math. */
-    private int addHeader(Text label, int x, int y, int w) {
-        ButtonWidget header = ButtonWidget.builder(label, b -> {}).dimensions(x, y, w, 16).build();
+    private int addHeader(Component label, int x, int y, int w) {
+        Button header = Button.builder(label, b -> {}).bounds(x, y, w, 16).build();
         header.active = false;
         addScroll(header, y);
         return y + 18;
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderScrollbar(ctx, (this.width + Math.min(360, this.width - 40)) / 2 + 4);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

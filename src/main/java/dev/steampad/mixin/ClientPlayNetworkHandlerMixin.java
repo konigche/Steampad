@@ -1,10 +1,10 @@
 package dev.steampad.mixin;
 
 import dev.steampad.haptics.HapticsController;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.network.packet.s2c.play.EntityDamageS2CPacket;
-import net.minecraft.network.packet.s2c.play.ExplosionS2CPacket;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -18,20 +18,31 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * descriptors used deliberately (this project has a history of mixin crashes from descriptor
  * mismatches — see D018).
  */
-@Mixin(ClientPlayNetworkHandler.class)
+@Mixin(ClientPacketListener.class)
 public abstract class ClientPlayNetworkHandlerMixin {
 
-    @Inject(method = "onExplosion(Lnet/minecraft/network/packet/s2c/play/ExplosionS2CPacket;)V", at = @At("TAIL"))
-    private void steampad$onExplosion(ExplosionS2CPacket packet, CallbackInfo ci) {
+    @Inject(method = "handleExplosion(Lnet/minecraft/network/protocol/game/ClientboundExplodePacket;)V", at = @At("TAIL"))
+    private void steampad$onExplosion(ClientboundExplodePacket packet, CallbackInfo ci) {
+        // 1.21.2 turned this packet into a record and reshaped it: loose x/y/z + power + knockbackX/Y/Z
+        // became center() (a Vec3), radius() and an Optional playerKnockback(). On the old shape a
+        // non-zero knockback vector is the equivalent of "present".
+        //? if >=1.21.2 {
         HapticsController.onExplosion(packet.center(), packet.radius(), packet.playerKnockback().isPresent());
+        //?} else {
+        /*HapticsController.onExplosion(
+                new net.minecraft.world.phys.Vec3(packet.getX(), packet.getY(), packet.getZ()),
+                packet.getPower(),
+                packet.getKnockbackX() != 0f || packet.getKnockbackY() != 0f
+                        || packet.getKnockbackZ() != 0f);
+        *///?}
     }
 
-    @Inject(method = "onEntityDamage(Lnet/minecraft/network/packet/s2c/play/EntityDamageS2CPacket;)V", at = @At("TAIL"))
-    private void steampad$onEntityDamage(EntityDamageS2CPacket packet, CallbackInfo ci) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null || mc.world == null) return;
+    @Inject(method = "handleDamageEvent(Lnet/minecraft/network/protocol/game/ClientboundDamageEventPacket;)V", at = @At("TAIL"))
+    private void steampad$onEntityDamage(ClientboundDamageEventPacket packet, CallbackInfo ci) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) return;
         if (packet.entityId() == mc.player.getId()) {
-            HapticsController.onPlayerDamaged(packet.createDamageSource(mc.world));
+            HapticsController.onPlayerDamaged(packet.getSource(mc.level));
             return;
         }
         // This same packet fires for ANY nearby entity taking damage (how vanilla shows hurt
@@ -39,9 +50,9 @@ public abstract class ClientPlayNetworkHandlerMixin {
         // melee OR ranged (arrows), so the mystery proximity ping can stop (feedback: "no se detiene
         // la vibracion de los jefes al darle el primer golpe... esto incluye flechas, lo mejor es al
         // hacerle daño"). See HapticsController.onEntityDamaged.
-        net.minecraft.entity.Entity target = mc.world.getEntityById(packet.entityId());
+        net.minecraft.world.entity.Entity target = mc.level.getEntity(packet.entityId());
         if (target != null) {
-            HapticsController.onEntityDamaged(target, packet.createDamageSource(mc.world));
+            HapticsController.onEntityDamaged(target, packet.getSource(mc.level));
         }
     }
 }

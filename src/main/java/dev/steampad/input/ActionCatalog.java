@@ -1,12 +1,11 @@
 package dev.steampad.input;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 
 /**
  * The full, categorized catalog of actions shown in the Buttons configuration screen. It mixes:
@@ -32,11 +31,11 @@ public final class ActionCatalog {
         public final GamepadBinds.Bind bind; // BIND
         public final String fixedGlyph;      // FIXED — glyph id (e.g. LS_UP, A)
         public final String descKey;         // optional description translation key (may be null)
-        public final KeyBinding keyBinding;  // EXTRA — the keybind
+        public final KeyMapping keyBinding;  // EXTRA — the keybind
         public final int slotIndex;          // SLOT — 0-based Steam Input slot index (-1 otherwise)
 
         private Entry(Kind kind, String labelKey, GamepadBinds.Bind bind,
-                      String fixedGlyph, String descKey, KeyBinding kb, int slotIndex) {
+                      String fixedGlyph, String descKey, KeyMapping kb, int slotIndex) {
             this.kind = kind;
             this.labelKey = labelKey;
             this.bind = bind;
@@ -61,8 +60,8 @@ public final class ActionCatalog {
         static Entry action(String labelKey) {
             return new Entry(Kind.ACTION, labelKey, null, null, labelKey + ".desc", null, -1);
         }
-        static Entry extra(KeyBinding kb) {
-            return new Entry(Kind.EXTRA, kb.getId(), null, null, null, kb, -1);
+        static Entry extra(KeyMapping kb) {
+            return new Entry(Kind.EXTRA, kb.getName(), null, null, null, kb, -1);
         }
         static Entry slot(int slotIndex) {
             return new Entry(Kind.SLOT, "steampad.act.steam_slot", null, null,
@@ -120,10 +119,14 @@ public final class ActionCatalog {
                 .add(Entry.bind(GamepadBinds.Bind.HOTBAR_PREV))
                 .add(Entry.bind(GamepadBinds.Bind.RADIAL))
                 .add(Entry.bind(GamepadBinds.Bind.PICK_BLOCK))
-                .add(Entry.bind(GamepadBinds.Bind.ZOOM))
                 .add(Entry.bind(GamepadBinds.Bind.THIRD_PERSON_SIDE_CYCLE))
                 .add(Entry.bind(GamepadBinds.Bind.THIRD_PERSON_FREE_LOOK_TOGGLE))
                 .add(Entry.bind(GamepadBinds.Bind.THIRD_PERSON_ADJUST)));
+
+        out.add(new Section("steampad.cat.zoom", null)
+                .add(Entry.bind(GamepadBinds.Bind.ZOOM))
+                .add(Entry.bind(GamepadBinds.Bind.ZOOM_IN))
+                .add(Entry.bind(GamepadBinds.Bind.ZOOM_OUT)));
 
         out.add(new Section("steampad.cat.inventory", null)
                 .add(Entry.bind(GamepadBinds.Bind.INVENTORY))
@@ -164,8 +167,12 @@ public final class ActionCatalog {
                 .add(Entry.fixed("steampad.act.vm_toggle", "BACK")));
 
         // Steam Input slots — generic actions the user maps to paddles/extra buttons in Steam's
-        // controller configurator; each slot triggers the keybind picked here. Placed after the
-        // built-in sections and before the per-mod keybind sections.
+        // controller configurator; each slot triggers the keybind picked here. HIDDEN from the
+        // catalog (feedback: "oculta... los botones que tengan que ver con Steam Input, Ranura(F13),
+        // etc, también capa menú/inventario/montado — hasta que no tenga solución la compatibilidad
+        // con Steam Input no lo pondremos") — the section-building code is kept intact (not deleted)
+        // so re-enabling it later is a one-line change, but `out.add(steamSlots)` is deliberately
+        // skipped so none of these rows appear in the Buttons screen for now.
         Section steamSlots = new Section("steampad.cat.steaminput", null);
         for (int i = 0; i < SteamSlotDispatcher.SLOT_COUNT; i++) {
             steamSlots.add(Entry.slot(i));
@@ -176,34 +183,58 @@ public final class ActionCatalog {
         steamSlots.add(Entry.layer("steampad.slot.layer.menu", SteamSlotDispatcher.Context.MENU));
         steamSlots.add(Entry.layer("steampad.slot.layer.inventory", SteamSlotDispatcher.Context.INVENTORY));
         steamSlots.add(Entry.layer("steampad.slot.layer.mounted", SteamSlotDispatcher.Context.MOUNTED));
-        out.add(steamSlots);
+        // out.add(steamSlots);   // re-enable once Steam Input compatibility is solved
 
         // Dynamic: EVERY keybind (vanilla + mods), grouped by the OWNING MOD (S4), so a mod's keybinds
         // sit together under that mod's display name. Vanilla keybinds keep their localized category
         // name; anything unparseable falls into a localized "Others" bucket. Robust (no fragile "is it a
         // mod?" heuristic) and nothing mappable is hidden.
-        Map<String, List<KeyBinding>> byGroup = collectKeybindsByGroup();
+        Map<String, List<KeyMapping>> byGroup = collectKeybindsByGroup();
         for (var e : byGroup.entrySet()) {
             Section s = new Section(null, e.getKey());
-            for (KeyBinding kb : e.getValue()) s.add(Entry.extra(kb));
+            for (KeyMapping kb : e.getValue()) s.add(Entry.extra(kb));
             out.add(s);
         }
         return out;
     }
 
+    /**
+     * The mod that OWNS a keybind — the very same value that decides which section it lands in on the
+     * Buttons screen ("así como en los botones lo agrupa"). Empty for vanilla and for anything whose
+     * owner cannot be resolved.
+     *
+     * <p>Exposed so {@link ModKeybindContext} can link an open screen to the same grouping the player
+     * already sees, instead of inventing a second, parallel notion of "which mod is this".
+     */
+    public static String modIdOf(KeyMapping kb) {
+        if (kb == null) return "";
+        java.lang.reflect.Method getCategory = null;
+        try { getCategory = KeyMapping.class.getMethod("getCategory"); } catch (Throwable ignored) {}
+        String ns = namespaceOf(categoryString(kb, getCategory));
+        if (ns == null) ns = namespaceOfKeybindId(kb.getName());
+        return (ns == null || ns.isEmpty() || ns.equals("minecraft")) ? "" : ns;
+    }
+
+    /** The friendly name of a mod id, for the on-screen group header. Never null. */
+    public static String modDisplayName(String modId) {
+        if (modId == null || modId.isEmpty()) return "";
+        String n = modName(modId);
+        return n != null ? n : capitalize(modId);
+    }
+
     /** All keybinds grouped by owning mod (vanilla → localized category). Never throws. */
-    private static Map<String, List<KeyBinding>> collectKeybindsByGroup() {
-        Map<String, List<KeyBinding>> byGroup = new TreeMap<>();
-        MinecraftClient mc = MinecraftClient.getInstance();
+    private static Map<String, List<KeyMapping>> collectKeybindsByGroup() {
+        Map<String, List<KeyMapping>> byGroup = new TreeMap<>();
+        Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.options == null) return byGroup;
         java.lang.reflect.Method getCategory = null;
-        try { getCategory = KeyBinding.class.getMethod("getCategory"); } catch (Throwable ignored) {}
+        try { getCategory = KeyMapping.class.getMethod("getCategory"); } catch (Throwable ignored) {}
         String othersLabel = translate("steampad.cat.other", "Others");
         try {
-            for (KeyBinding kb : mc.options.allKeys) {
-                if (kb.getId().equals("key.steampad.open_menu")) continue;   // our own — skip
+            for (KeyMapping kb : mc.options.keyMappings) {
+                if (kb.getName().equals("key.steampad.open_menu")) continue;   // our own — skip
                 String cat = categoryString(kb, getCategory);
-                String group = groupLabel(cat, kb.getId(), othersLabel);
+                String group = groupLabel(cat, kb.getName(), othersLabel);
                 byGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(kb);
             }
         } catch (Throwable ignored) {
@@ -212,7 +243,7 @@ public final class ActionCatalog {
         return byGroup;
     }
 
-    private static String categoryString(KeyBinding kb, java.lang.reflect.Method getCategory) {
+    private static String categoryString(KeyMapping kb, java.lang.reflect.Method getCategory) {
         if (getCategory == null) return null;
         try {
             Object c = getCategory.invoke(kb);
@@ -304,7 +335,7 @@ public final class ActionCatalog {
     /** Translate a key; returns {@code fallback} if the key is missing (null fallback → null on miss). */
     private static String translate(String key, String fallback) {
         try {
-            String s = net.minecraft.text.Text.translatable(key).getString();
+            String s = net.minecraft.network.chat.Component.translatable(key).getString();
             if (!s.equals(key)) return s;
         } catch (Throwable ignored) {}
         return fallback;

@@ -845,3 +845,74 @@ Para considerar el mod **release candidate**:
 - [ ] 0 bugs críticos sin documentar
 - [ ] README de instalación/uso completo
 - [ ] VDF de Steam Input incluido y documentado
+
+---
+
+## 5. Pruebas Manuales del Port a 1.21.1 (sesión 31) — PENDIENTES, B103
+
+Nada de esto se ha ejecutado en Minecraft. El build está verde y la superficie de mixins verificada
+contra el bytecode real de 1.21.1 (D142), lo que descarta que revienten **al arrancar** — no que se
+comporten bien. Orden deliberado: de mayor a menor riesgo.
+
+**Jar:** `dist/steampad-0.87.0+1.21.1-fabric.jar` · **Instancia:** Fabric sobre Minecraft 1.21.1
+
+### PT-1 — Arranque (bloqueante de todo lo demás)
+- [ ] PT-1.1 El mod carga sin excepción de Mixin en el log. Un `@Inject`/`@At` que no encuentre su
+      objetivo aborta aquí — es el fallo que la auditoría de bytecode pretende haber descartado.
+- [ ] PT-1.2 El class tweaker aplica: no hay `IllegalAccessError` al usar teclado/ratón virtuales.
+- [ ] PT-1.3 Se detecta el mando por SDL3 y la pantalla de selección lo lista.
+
+### PT-2 — Sprint (D139, el punto más delicado del port)
+- [ ] PT-2.1 Sprint con el mando funciona (modo HOLD) y para al soltar.
+- [ ] PT-2.2 Modo TOGGLE del sprint respeta la config.
+- [ ] PT-2.3 **Sprint con el TECLADO mientras el mando está conectado no se cancela.** Es el bug que la
+      lógica por flancos evita; si falla, la tecla física se apaga sola.
+- [ ] PT-2.4 **Abrir un menú mientras se sprinta no deja el sprint pegado.** Cerrar y comprobar que ya
+      no sprinta solo.
+- [ ] PT-2.5 El sprint respeta las reglas vanilla: se corta con hambre baja, cambia el FOV, permite
+      sprint-jump. (Es la razón de emular la tecla en vez de forzar el estado.)
+
+### PT-3 — Movimiento analógico
+- [ ] PT-3.1 Empujar poco el stick camina despacio; empujar a fondo corre.
+- [ ] PT-3.2 **Agacharse con el stick frena de verdad.** Antes de 1.21.4 vanilla aplica el multiplicador
+      dentro de `tick` y el mixin sobrescribe en TAIL: si el escalado no se replicó, se movería a
+      velocidad completa agachado.
+- [ ] PT-3.3 WASD sigue funcionando con el mando conectado (la fusión, no sobrescritura).
+- [ ] PT-3.4 Movimiento relativo a cámara (opt-in) gira el cuerpo y anima/sprinta coherente.
+
+### PT-4 — Emotes (S4)
+- [ ] PT-4.1 Un emote se reproduce con la pose correcta en 3ª persona.
+- [ ] PT-4.2 **El canal `body` funciona: sentarse toca el suelo.** Si vuelve el "se sienta en el aire",
+      el hook de `PlayerRenderer.setupRotations` no está aplicando (D110).
+- [ ] PT-4.3 Miniaturas de la biblioteca de emotes: cada celda muestra **su** pose, no todas la misma.
+      En 1.21.1 esto va por render inmediato en vez del tagging diferido de D099.
+- [ ] PT-4.4 Previews de la rueda de emotes, igual.
+- [ ] PT-4.5 Emote de otro jugador en multijugador (la red de emotes).
+- [ ] PT-4.6 Tras un emote el modelo vuelve a la pose normal (sin contaminación entre entidades).
+
+### PT-5 — Cámara 3ª persona
+- [ ] PT-5.1 Free-look: el stick derecho mueve la cámara sin girar el cuerpo.
+- [ ] PT-5.2 Apuntar con arco acerca la cámara al hombro y el aim assist apunta por la **cámara**.
+- [ ] PT-5.3 El alcance de la mira es correcto (que no falte ni sobre distancia al interactuar).
+- [ ] PT-5.4 Modo espejo (vista frontal) renderiza y no acumula rotación al volver.
+- [ ] PT-5.5 Zoom de emote con D-pad y su reset al terminar.
+
+### PT-6 — Sustituciones de versión (D140), donde el comportamiento difiere a propósito
+- [ ] PT-6.1 Blur del radial: en 1.21.1 debe verse un **oscurecido**, no desenfoque — y **nunca** nada.
+- [ ] PT-6.2 Haptic "cerca de casa": en 1.21.1 se dispara alrededor del **spawn del mundo**, no de la cama.
+- [ ] PT-6.3 Toggle de F3 desde el mando abre y cierra el overlay de depuración.
+
+### PT-7 — Resto del mod (paridad, no debería haber sorpresas pero hay que mirar)
+- [ ] PT-7.1 Radial: abrir, seleccionar, ejecutar acciones. Ambas pieles (CLASSIC y SEGMENTED).
+- [ ] PT-7.2 Item Radial / mochila (LB/RB).
+- [ ] PT-7.3 Teclado virtual: escribir en el chat y en un buscador de mod (REI si está).
+- [ ] PT-7.4 Ratón virtual y navegación de menús por D-pad.
+- [ ] PT-7.5 Haptics de combate (por paquetes del servidor, D115).
+- [ ] PT-7.6 Ranuras de paddle por tecla F13–F22 (D034).
+- [ ] PT-7.7 Persistencia de config en `.minecraft/config/steampad/`.
+
+### PT-8 — Control de no-regresión en 1.21.10
+- [ ] PT-8.1 Arranque del jar de 1.21.10 tras la migración a Mojmap y la reestructura del build.
+      Los tests no cubren que algo se haya movido en runtime.
+- [ ] PT-8.2 Un emote y la cámara 3ª persona en 1.21.10, para confirmar que las ramas condicionales no
+      alteraron el camino que ya estaba firmado en hardware.

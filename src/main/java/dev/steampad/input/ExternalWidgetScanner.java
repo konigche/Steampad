@@ -1,8 +1,5 @@
 package dev.steampad.input;
 
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ClickableWidget;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -11,24 +8,26 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.screens.Screen;
 
 /**
  * Finds clickable-ish things a screen owns but never adds to {@code screen.children()} — the pattern
- * used by REI (whose overlay widgets are real {@link ClickableWidget}s, just never registered — see
+ * used by REI (whose overlay widgets are real {@link AbstractWidget}s, just never registered — see
  * D063/D068) and, verified against its real 1.21.10-fabric source, by Traveler's Backpack: its
  * {@code BackpackScreen} keeps a {@code public List<IButton> buttons}, and {@code IButton} (its
  * {@code EquipButton}/{@code MoreButton}/{@code UnequipButton}/etc.) has NOTHING to do with vanilla's
  * widget hierarchy at all — it's a bespoke interface, dispatched by the screen's own overridden
  * {@code mouseClicked()} iterating that list by hand. A scanner that only recognized
- * {@link ClickableWidget} instances would find the {@code buttons} field (it's a {@code List}, a
+ * {@link AbstractWidget} instances would find the {@code buttons} field (it's a {@code List}, a
  * candidate) but skip every element inside it, which is exactly why the first version of this scanner
  * (D068) found nothing there despite compiling clean.
  *
- * <p>So this doesn't require any particular type: real {@link ClickableWidget}s get their bounds from
+ * <p>So this doesn't require any particular type: real {@link AbstractWidget}s get their bounds from
  * their own getters (fast path); anything else found inside a scanned field is duck-typed — reflected
  * for numeric {@code x}/{@code y}/{@code width}/{@code height} (or {@code w}/{@code h}) fields anywhere
  * in its own class hierarchy, the same near-universal bounds shape vanilla's own widgets use. Only
- * position/size is needed: activation for anything that isn't a real {@link ClickableWidget} already
+ * position/size is needed: activation for anything that isn't a real {@link AbstractWidget} already
  * goes through a real cursor click via {@link VirtualMouseController} (see
  * {@code GuiFocusNavigator.activate}), not a direct method call on the discovered object — so there's no
  * need to know the mod's own click method signature at all.
@@ -37,11 +36,11 @@ public final class ExternalWidgetScanner {
 
     private ExternalWidgetScanner() {}
 
-    /** A snap/nav target: a screen-space rectangle, plus the source {@link ClickableWidget} when the
+    /** A snap/nav target: a screen-space rectangle, plus the source {@link AbstractWidget} when the
      *  target genuinely is one (REI's case) — null for duck-typed, non-vanilla targets (Traveler's
      *  Backpack's {@code IButton}s and similar), which can only ever be reached via a real cursor click
      *  since there's no common type to call a click method on or to focus through vanilla's own system. */
-    public record Target(double x, double y, double width, double height, ClickableWidget widget) {
+    public record Target(double x, double y, double width, double height, AbstractWidget widget) {
         public double centerX() { return x + width / 2.0; }
         public double centerY() { return y + height / 2.0; }
     }
@@ -71,6 +70,15 @@ public final class ExternalWidgetScanner {
     // don't match). This only fires for screens matching "backpack" and is throttled independently
     // of the snap memoization above, so it can't flood the log even if the screen stays open a while.
     private static long lastBackpackDiagNanos = 0L;
+    /** Last captured trace from the diagnostic below, kept (not just logged) so the Debug Dump can show
+     *  it on demand — three prior rounds (v0.35/0.36/0.38, D078) relied on catching the throttled
+     *  {@code [mouse-arb]}-style log line at exactly the right moment in {@code latest.log}, which never
+     *  reliably happened. A dump the user generates any time the backpack is open is a sure hit. */
+    private static volatile String lastBackpackDiagSummary = "no data yet — open a Traveler's Backpack screen, then generate the Debug Dump while it's open";
+
+    /** Last backpack-scanner trace captured by {@link #discover}, for the Debug Dump — see
+     *  {@link #lastBackpackDiagSummary}. */
+    public static String lastBackpackDiagSummary() { return lastBackpackDiagSummary; }
 
     /**
      * Extra snap/nav targets this screen owns but didn't register in {@code children()}. Never throws
@@ -137,9 +145,12 @@ public final class ExternalWidgetScanner {
         }
         if (diag) {
             lastBackpackDiagNanos = now;
-            dev.steampad.util.LogUtil.debug("[SteamPad] Backpack widget scan on {}: panel={} resolved={} targets — {}",
+            String summary = String.format(java.util.Locale.ROOT,
+                    "%s: panel=%s resolved=%d targets — %s",
                     screen.getClass().getName(), java.util.Arrays.toString(panelRectOf(screen)), out.size(),
                     String.join(" | ", trace));
+            lastBackpackDiagSummary = summary;
+            dev.steampad.util.LogUtil.debug("[SteamPad] Backpack widget scan on {}", summary);
         }
         memoScreen = new java.lang.ref.WeakReference<>(screen);
         memoAtNanos = now;
@@ -151,7 +162,7 @@ public final class ExternalWidgetScanner {
     /** The container GUI panel rect as {x, y, w, h}, or null for non-container screens. */
     private static int[] panelRectOf(Screen screen) {
         try {
-            if (screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> hs) {
+            if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> hs) {
                 var acc = (dev.steampad.mixin.HandledScreenAccessor) hs;
                 return new int[]{acc.steampad$getX(), acc.steampad$getY(),
                         acc.steampad$getBackgroundWidth(), acc.steampad$getBackgroundHeight()};
@@ -165,7 +176,7 @@ public final class ExternalWidgetScanner {
                                         List<String> trace) {
         if (o == null || known.contains(o) || !seen.add(o)) return;
 
-        if (o instanceof ClickableWidget w) {
+        if (o instanceof AbstractWidget w) {
             if (!w.visible || !w.active || w.getWidth() <= 0 || w.getHeight() <= 0) return;
             out.add(new Target(w.getX(), w.getY(), w.getWidth(), w.getHeight(), w));
             return;
@@ -230,7 +241,7 @@ public final class ExternalWidgetScanner {
                 if (Modifier.isStatic(f.getModifiers())) continue;
                 Class<?> t = f.getType();
                 boolean candidate = !t.isPrimitive()
-                        && (ClickableWidget.class.isAssignableFrom(t)
+                        && (AbstractWidget.class.isAssignableFrom(t)
                         || Collection.class.isAssignableFrom(t)
                         || t.isArray()
                         || Map.class.isAssignableFrom(t));

@@ -2,11 +2,11 @@ package dev.steampad.screen;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.GlobalConfig;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Steam Input hub: the attach-mode switch (previously config-file-only, see D074), applying changes
@@ -18,7 +18,7 @@ public class SteamInputSettingsScreen extends ColumnSettingsScreen {
     private GlobalConfig cfg;
 
     public SteamInputSettingsScreen(Screen parent) {
-        super(Text.translatable("steampad.screen.steam_input.title"));
+        super(Component.translatable("steampad.screen.steam_input.title"));
         this.parent = parent;
     }
 
@@ -41,13 +41,20 @@ public class SteamInputSettingsScreen extends ColumnSettingsScreen {
         toggle("steampad.cset.deploy_iga_manifest", cfg.deployIgaManifest, v -> {
             cfg.deployIgaManifest = v;
             save();
-            if (!v) dev.steampad.steam.SteamControllerConfigDeployer.cleanupOurManifests();
+            if (v) {
+                // Deploy RIGHT NOW. Previously only the OFF path acted immediately (it cleaned up),
+                // while turning it ON did nothing until the next game start — with no feedback either
+                // way, which reads as "the toggle is broken". Both directions are now symmetric.
+                dev.steampad.steam.SteamBootstrap.deployManifestNow();
+            } else {
+                dev.steampad.steam.SteamControllerConfigDeployer.cleanupOurManifests();
+            }
         });
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     private void save() { ConfigManager.saveGlobal(); }
@@ -78,12 +85,12 @@ public class SteamInputSettingsScreen extends ColumnSettingsScreen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

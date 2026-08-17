@@ -19,18 +19,26 @@ import java.util.List;
  * <ol>
  *   <li><b>SDL3</b> (via JNA) when available and enabled — broad device DB + rumble.</li>
  *   <li><b>GLFW</b> joystick/gamepad detection — the always-available baseline.</li>
- *   <li><b>Steam Input</b> (ISteamController) only as a last resort, when neither fallback sees any
- *       physical device — extremely rare.</li>
+ *   <li><b>Steam Input</b> (ISteamController) when neither fallback sees a physical device — which,
+ *       with the IGA manifest deployed, is the normal state rather than a rare one.</li>
  * </ol>
  *
- * <p><b>Why Steam Input isn't primary despite CLAUDE.md's original "Steam Input principal" rule:</b>
- * Once a valid VDF/ActionSet made Steam Input eligible to be primary, gameplay went silent —
- * Steam Input only forwards actions the user explicitly bound in Steam's own controller-layout UI,
- * so unless EVERY action (movement, camera, menus, all of BOTONES) is remapped there too, nothing
- * responds. That defeats the "just works" default the fallback backends already provide. Steam
- * Input is instead used in PARALLEL, only for the generic slot actions (paddles → keybinds, see
- * {@code SteamSlotDispatcher}, D030) — {@code SteamSlotDispatcher} reads Steam Input's state
- * directly via {@code SteamInputManager}, independent of which source this class reports as active.
+ * <p><b>Hybrid auto-switch (v0.77.0, D117) — supersedes the old "Steam Input is never primary"
+ * rule.</b> D032 demoted Steam Input because a deployed manifest bound <em>nothing</em>: Steam only
+ * forwards actions the user wired up by hand in its configurator, so promoting it made gameplay go
+ * silent unless every single action was remapped there. The manifest now ships real default bindings
+ * generated from the mod's own button defaults ({@link dev.steampad.steam.SteamDefaultConfigGenerator}),
+ * which removes that objection entirely.
+ *
+ * <p>The switch is automatic and one-directional by circumstance, not by preference: SDL3/GLFW are
+ * still tried first and still win whenever they can see a pad. Steam Input takes over only when they
+ * cannot — and with the manifest deployed they cannot, because Steam claims the controller and stops
+ * emitting the virtual gamepad they read (B076). With the manifest off, nothing about the previous
+ * behaviour changes.
+ *
+ * <p>Independently of all of the above, {@code SteamSlotDispatcher} keeps reading Steam Input
+ * directly for the generic slot actions (paddles → keybinds, D030), whichever source this class
+ * reports as active.
  *
  * <p>Every backend returns {@link SteamControllerHandleRef}, and handles are tagged by source, so a
  * single dispatcher can read state via {@link #readSnapshot}.
@@ -103,6 +111,17 @@ public final class ControllerManager {
         long now = System.currentTimeMillis();
         if (now - cacheStamp < CACHE_MS && cacheStamp != 0L) return;
         cacheStamp = now;
+        try {
+            refreshCacheInner();
+        } finally {
+            // Resolve persistent identities for whatever ended up in the list, ALWAYS and in one
+            // place, so nothing downstream can read a per-controller config before the handle it is
+            // keyed by has an identity. Cheap no-op while the connected set is unchanged.
+            ControllerIdentityService.refresh(cachedList);
+        }
+    }
+
+    private static void refreshCacheInner() {
         // SDL3/GLFW first, always — see the class doc for why Steam Input is deliberately NOT
         // promoted to primary here even when its ActionSets are valid.
         GlobalConfig g = ConfigManager.getGlobal();
@@ -122,28 +141,108 @@ public final class ControllerManager {
         if (!sdl.isEmpty()) {
             // MERGE, not cascade: SDL3 can miss a pad GLFW does see (real case: the ROG Ally's
             // built-in pad only shows via GLFW while an 8BitDo is on SDL3 — the all-or-nothing
-            // cascade made it invisible until the 8BitDo disconnected). Append GLFW devices whose
-            // name SDL3 didn't already report (same physical pad is visible to both backends).
-            List<SteamControllerHandleRef> merged = new java.util.ArrayList<>(sdl);
-            java.util.Set<String> seen = new java.util.HashSet<>();
-            for (SteamControllerHandleRef r : sdl) seen.add(r.displayName.toLowerCase(java.util.Locale.ROOT));
-            for (SteamControllerHandleRef r : glfw) {
-                if (seen.add(r.displayName.toLowerCase(java.util.Locale.ROOT))) merged.add(r);
-            }
-            cachedList = merged;
+            // cascade made it invisible until the 8BitDo disconnected). Append only the GLFW devices
+            // that are NOT the same physical pad SDL3 already reported.
+            cachedList = mergeBackends(sdl, glfw);
             cachedSource = Source.SDL3;
             return;
         }
         if (!glfw.isEmpty()) { cachedList = glfw; cachedSource = Source.GLFW_FALLBACK; return; }
-        // Last resort: neither fallback sees any physical device. Only used when ActionSets are
-        // valid, to avoid ghost/virtual devices misleading the selector.
-        if (SteamInputManager.isAvailable() && SteamInputManager.areActionSetsValid()) {
-            cachedList = SteamInputManager.getConnectedControllers();
-            cachedSource = Source.STEAM_INPUT;
-            return;
+
+        // ---- Steam Input takeover (hybrid auto-switch, v0.77.0 / D117) ---------------------------
+        // Both fallbacks are blind. With the IGA manifest deployed that is the EXPECTED state, not a
+        // failure: Steam then treats the title as a Steam-Input-API game, claims the pad, and stops
+        // emitting the virtual gamepad SDL3/GLFW consume (B076). Steam Input is the only thing that
+        // can still see the controller, so it takes over gameplay rather than merely adding paddles.
+        //
+        // This is what deadlocked before and produced the reported "connects but never turns green":
+        // manifest on -> fallbacks blind -> this branch -> but it demanded areActionSetsValid(), which
+        // is false until Steam has actually loaded the manifest (needs a Steam restart). Everything in
+        // between reported NONE, i.e. no controller at all, even though Steam could see it perfectly.
+        //
+        // Promoting Steam Input to primary is only safe because the manifest now ships real default
+        // bindings (SteamDefaultConfigGenerator) — the reason D032 rejected it was that an unbound
+        // manifest made gameplay silent, which is no longer the case.
+        if (SteamInputManager.isAvailable()) {
+            List<SteamControllerHandleRef> steam = dropFakes(SteamInputManager.getConnectedControllers());
+            if (!steam.isEmpty()) {
+                cachedList = steam;
+                cachedSource = Source.STEAM_INPUT;
+                // Report the degraded case loudly instead of silently showing a pad that can't act:
+                // the device is real and selectable, but until Steam loads the manifest none of its
+                // actions resolve. Says exactly what to do rather than leaving a dead controller.
+                if (!SteamInputManager.areActionSetsValid() && !warnedActionSetsMissing) {
+                    warnedActionSetsMissing = true;
+                    dev.steampad.util.LogUtil.warn(
+                            "[SteamPad] Steam Input sees {} controller(s) but the action sets are NOT "
+                            + "loaded yet, so no button will respond. Steam picks the manifest up only "
+                            + "at startup: RESTART STEAM once. If it still fails afterwards, the "
+                            + "manifest never reached Steam's controller_config folder — check the "
+                            + "deploy lines above in this log.", steam.size());
+                } else if (SteamInputManager.areActionSetsValid() && warnedActionSetsMissing) {
+                    warnedActionSetsMissing = false;
+                    dev.steampad.util.LogUtil.info("[SteamPad] Steam Input action sets are now valid — "
+                            + "controllers are fully live on the Steam Input path.");
+                }
+                return;
+            }
         }
         cachedList = List.of();
         cachedSource = Source.NONE;
+    }
+
+    /**
+     * SDL3's list plus only the GLFW devices that aren't the SAME physical pad SDL3 already reported.
+     *
+     * <p>Dedup key is the USB VID/PID, not the display name. Names cannot do this job: one physical
+     * pad routinely reports completely unrelated names to the two backends (real case on Windows:
+     * SDL3 "8Bitdo Ultimate 2 Wireless Controller" vs GLFW "Eje 6 botón 24 controlador para juegos con
+     * pulsador superior"), which is exactly how it ended up listed twice.
+     *
+     * <p>Matching is ONE-TO-ONE rather than "drop every GLFW pad whose VID/PID appears in SDL3": two
+     * identical pads of the same model share a VID/PID, and a set-based check would silently hide the
+     * second one. Each SDL3 pad absorbs at most one GLFW pad.
+     *
+     * <p>A pad whose VID/PID is unknown on either side (0 — e.g. GLFW's synthetic XInput GUIDs, which
+     * encode no real IDs) can't be matched this way and falls back to the previous name comparison,
+     * which is still right whenever both backends do agree on the name.
+     */
+    static List<SteamControllerHandleRef> mergeBackends(List<SteamControllerHandleRef> sdl,
+                                                        List<SteamControllerHandleRef> glfw) {
+        List<SteamControllerHandleRef> merged = new java.util.ArrayList<>(sdl);
+        // Remaining SDL3 pads available to absorb a GLFW duplicate, keyed "vid:pid".
+        java.util.Map<String, Integer> unmatched = new java.util.HashMap<>();
+        java.util.Set<String> sdlNames = new java.util.HashSet<>();
+        for (SteamControllerHandleRef r : sdl) {
+            if (r.vendorId != 0 && r.productId != 0) {
+                unmatched.merge(r.vendorId + ":" + r.productId, 1, Integer::sum);
+            }
+            if (r.displayName != null) sdlNames.add(r.displayName.toLowerCase(java.util.Locale.ROOT));
+        }
+        for (SteamControllerHandleRef r : glfw) {
+            String key = r.vendorId + ":" + r.productId;
+            Integer left = (r.vendorId != 0 && r.productId != 0) ? unmatched.get(key) : null;
+            if (left != null && left > 0) {
+                unmatched.put(key, left - 1);   // same physical pad, already listed via SDL3
+                continue;
+            }
+            if (r.displayName != null
+                    && !sdlNames.add(r.displayName.toLowerCase(java.util.Locale.ROOT))) {
+                continue;                        // name fallback, for pads with no usable VID/PID
+            }
+            merged.add(r);
+        }
+        return merged;
+    }
+
+    /** One-shot latch so the "sets not loaded" warning can't spam a polling loop. */
+    private static boolean warnedActionSetsMissing = false;
+
+    /** True when controllers are currently coming from Steam Input but its action sets have not been
+     *  loaded yet — the device is visible but no action will resolve. Surfaced in the debug dump and
+     *  the controller UI so this state is never mistaken for a working controller. */
+    public static boolean isSteamInputDegraded() {
+        return cachedSource == Source.STEAM_INPUT && !SteamInputManager.areActionSetsValid();
     }
 
     /** Connected controllers from the highest-priority live backend (cached briefly). */
@@ -187,8 +286,8 @@ public final class ControllerManager {
      * SDL3 → native rumble, Steam → ISteamController vibration, GLFW → no-op (GLFW has no rumble API).
      * {@code intensity} in [0,1]; {@code durationMs} used by SDL3.
      */
-    public static void rumble(long handle, float intensity, int durationMs) {
-        rumble(handle, intensity, intensity, durationMs);
+    public static boolean rumble(long handle, float intensity, int durationMs) {
+        return rumble(handle, intensity, intensity, durationMs);
     }
 
     /**
@@ -197,18 +296,24 @@ public final class ControllerManager {
      * the only "texture" control our hardware actually offers (SDL3 dual-motor rumble / Steamworks4j
      * triggerVibration's two channels — no true HD haptics, see B003), but leaning on the two motors
      * differently already reads as "heavy" vs "sharp" to the player at no extra cost.
+     *
+     * @return whether the call actually reached (and, for SDL3, was ACCEPTED by) the backend — false
+     *         for handle==0, "Allow Vibration" off, GLFW (no rumble API at all), or SDL3 explicitly
+     *         rejecting the request. Diagnostic use (see {@code HapticsController}) — never gates
+     *         gameplay logic, only what gets logged.
      */
-    public static void rumble(long handle, float lowFreq, float highFreq, int durationMs) {
-        if (handle == 0L) return;
+    public static boolean rumble(long handle, float lowFreq, float highFreq, int durationMs) {
+        if (handle == 0L) return false;
         // Respect the per-controller "Allow Vibration" option (it existed but was never enforced).
         var cfg = ConfigManager.getControllerConfig(handle);
-        if (cfg != null && !cfg.allowVibration) return;
+        if (cfg != null && !cfg.allowVibration) return false;
         if (Sdl3GamepadProvider.isSdl3Handle(handle)) {
-            Sdl3GamepadProvider.rumble(handle, lowFreq, highFreq, durationMs);
+            return Sdl3GamepadProvider.rumble(handle, lowFreq, highFreq, durationMs);
         } else if (GlfwControllerProvider.isGlfwHandle(handle)) {
-            // GLFW exposes no rumble; nothing to do.
+            return false;   // GLFW exposes no rumble; nothing to do.
         } else {
             SteamHapticsService.triggerVibration(handle, (int) (lowFreq * 0xFFFF), (int) (highFreq * 0xFFFF));
+            return true;   // Steamworks4j swallows its own failures; no per-call confirmation available.
         }
     }
 }

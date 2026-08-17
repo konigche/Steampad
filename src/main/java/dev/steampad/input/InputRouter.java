@@ -59,6 +59,21 @@ public final class InputRouter {
         lastMouseMoveMs = System.currentTimeMillis();
     }
 
+    /**
+     * A physical keyboard key is down. Keyboard and mouse are ONE device as far as this router is
+     * concerned — {@link Device#MOUSE} means "the keyboard/mouse side", not literally the mouse — so
+     * this shares {@link #markMouseForce}'s unconditional semantics: a key press is as unambiguous a
+     * human action as a click, and must never be filtered by {@link #GAMEPAD_HOLD_MS} (that window
+     * exists for phantom trackpad/gyro MOTION, which a key press is not).
+     *
+     * <p>Feeds the exclusive-input mode gated on {@code ControllerConfig.mixedInput} — see
+     * {@code KeyboardInputMixin} for where the signal is produced and what it gates.
+     */
+    public static void markKeyboard() {
+        active = Device.MOUSE;
+        lastMouseMoveMs = System.currentTimeMillis();
+    }
+
     /** True if the mouse moved within the last {@code ms} milliseconds (for transient glyph hiding). */
     public static boolean mouseMovedRecently(long ms) {
         return System.currentTimeMillis() - lastMouseMoveMs < ms;

@@ -51,6 +51,12 @@ public final class GlobalConfig {
     public boolean useSdl3Fallback = true;   // try SDL3 (via JNA) before GLFW for richer device support
     public boolean useGlfwFallback = true;   // GLFW joystick detection — the always-available baseline
 
+    // Absolute path to libSDL3, for installs the automatic search can't predict. Blank = search
+    // automatically (Steam's own copy, then system locations — see Sdl3Library). Only needed when the
+    // log says libSDL3 wasn't found; SDL3 is what provides rumble, back paddles and the wide device
+    // database, so GLFW-only is a real downgrade rather than an equivalent path.
+    public String sdl3LibraryPath = "";
+
     // Server Options
     public BlockReachAround blockReachAround = BlockReachAround.OFF;
     public boolean allowServerVibration = false;
@@ -134,13 +140,41 @@ public final class GlobalConfig {
     public boolean thirdPersonCameraEnabled = false;
     public ThirdPersonCameraSide thirdPersonCameraSide = ThirdPersonCameraSide.RIGHT;
     // Lateral shift in blocks at full offset (LEFT/RIGHT) — clamped by a raycast so the camera never
-    // ends up clipping into a wall next to the player.
-    public float thirdPersonCameraOffset = 0.6f;
+    // ends up clipping into a wall next to the player. Default 30% (point 7/D120) — the UI's own
+    // slider (GlobalSettingsScreen) already displays this value ×100 as a literal percentage.
+    public float thirdPersonCameraOffset = 0.30f;
     // Aiming-mode camera profile (credited design, same source as thirdPersonCameraEnabled): while
     // charging a bow/crossbow/trident, the offset eases to a closer, more centered position — mirrors
     // the reference mod's separate "aiming" offset profile. Off = same offset always, aim or not.
     public boolean thirdPersonAimingProfile = true;
     public float thirdPersonAimingOffset = 0.3f;
+    // Auto-switch to third person on boarding anything rideable (horse, boat, minecart, a mod's own
+    // mount/vehicle) and back to first person on dismount - independent of free-look, so it also
+    // applies with just the plain over-the-shoulder offset above. On by default (the feature was
+    // requested WITH its own opt-out, not as an opt-in), still fully covered by the master switch
+    // above like everything else in this section.
+    public boolean thirdPersonAutoSwitchOnMount = true;
+    // Mod compat, not a SteamPad camera feature: the Gliders mod's own "Glider Perspective" option
+    // (third person while gliding) is re-created as OFF on every launch because that mod never saves
+    // it anywhere — proven against its jar, see GlidersCompat. With this on, SteamPad flips it back on
+    // once per world entry. OFF by default: forcing another mod's option is opt-in.
+    public boolean glidersForcePerspective = false;
+    // Downward tilt (degrees) the chase camera settles at while mounted, once the right stick is back
+    // at rest — the "driving camera" angle. Positive = looking DOWN, which places the camera HIGH and
+    // behind the mount (the pose is built as rotateCenter - lookDirection*distance, so tilting the look
+    // down lifts the camera up). Feedback that produced it: "esta muy bajo el angulo y no se aprecia
+    // mucho" — the previous behaviour copied the RIDER's own pitch, which while riding is roughly
+    // level, leaving the camera at the mount's own height staring into its back. 20° reads as a clearly
+    // elevated chase view without becoming top-down. Only consulted while mounted and while the player
+    // is NOT holding a deliberate free-look push (that gesture owns the pitch outright while it lasts).
+    public float thirdPersonMountedCameraPitch = 20.0f;
+    // Camera distance (blocks) while mounted, separate from thirdPersonFreeDistance. Requested
+    // straight after the angle landed: "solo aleja un poco mas la camara cuando esta montado". A mount
+    // is simply bigger than a player — a horse or a boat fills far more of the frame at the on-foot
+    // distance — so the driving view wants its own pull-back rather than a compromise value shared with
+    // walking around. Default 4.0 vs the on-foot 2.7. Aiming still wins over this (charging a bow
+    // pulls the camera in close whether you're mounted or not); so does a real emote.
+    public float thirdPersonMountedCameraDistance = 4.0f;
 
     public enum ThirdPersonCameraSide { LEFT, CENTER, RIGHT }
 
@@ -161,14 +195,21 @@ public final class GlobalConfig {
     // looks. Only matters when thirdPersonCrosshairEnabled is also on (uses the same hit-test).
     public boolean thirdPersonPredictiveAim = true;
     public boolean thirdPersonPitchLock = false;
-    public float thirdPersonFreeDistance = 4.0f;   // blocks, matches vanilla's own fixed 3rd-person distance
-    // OFF by default, opt-in ON TOP of free-look: reinterprets the left stick relative to the free
-    // camera's own facing (push "up" = away from the camera, not the body) and turns the body to
-    // match, instead of vanilla's always-body-relative movement. This is the one piece deliberately
-    // left out when free-look first shipped (D088) because it touches KeyboardInputMixin, the most
-    // movement-critical file in the project — with it off, that mixin's existing code path is
-    // byte-for-byte unchanged. See DECISIONS.md for the follow-up note.
-    public boolean thirdPersonCameraRelativeMovement = false;
+    // blocks — default 2.7 (270cm, point 7/D120; the UI's own slider already displays this ×100 as
+    // literal cm). Previously 4.0, matching vanilla's fixed 3rd-person distance.
+    public float thirdPersonFreeDistance = 2.7f;
+    // Reinterprets the left stick relative to the free camera's own facing (push "up" = away from the
+    // camera, not the body) and turns the body to match, instead of vanilla's always-body-relative
+    // movement. Shipped OFF (D088) purely as risk-aversion — it touches KeyboardInputMixin, the most
+    // movement-critical file in the project — and that caution has since been paid off by real use.
+    //
+    // NOW ON by default: with free-look on and this off, the body's yaw has NOTHING that can change it
+    // while moving (the right stick turns only the camera, and the idle rotate-strategy deliberately
+    // bails while moving), so the character literally cannot turn — reported as "quiero que el monito
+    // gire sobre su propio eje como un trompo y no lo permite". This is the completion of free-look,
+    // not an extra. Scope of the change is narrow: it is only ever read when free-look is enabled,
+    // which is itself opt-in and off by default, so nobody who hasn't opted into free-look is affected.
+    public boolean thirdPersonCameraRelativeMovement = true;
     // NOTE: the reference mod's "player transparency" (fade the model out when the camera sits close
     // behind/inside it) is deliberately NOT implemented — see TODO_BLOCKERS.md for why. No config field
     // for it on purpose: never ship a toggle for a feature that would silently do nothing.
@@ -216,13 +257,42 @@ public final class GlobalConfig {
     // Last active controller handle per session (restored on startup)
     public long lastActiveControllerHandle = 0L;
 
+    /**
+     * Last active controller by PERSISTENT IDENTITY key — what {@link #lastActiveControllerHandle}
+     * should always have been for cross-restart use.
+     *
+     * <p>A handle is a per-process number: SDL restarts its instance-id counter in every new process
+     * and GLFW hands out the first free slot, so "handle 1" in this session is frequently a DIFFERENT
+     * physical pad than "handle 1" was in the last one. Restoring by that number therefore did not
+     * merely fail to find the old pad, it silently activated whichever pad happened to land on the
+     * saved number — the reported "cuando se apaga y se vuelve a prender queda como loco". The handle
+     * field is still written and still consulted, but only as a same-session fallback, and only after
+     * this key has had its chance. Empty = nothing recorded yet.
+     */
+    public String lastActiveControllerId = "";
+
     /** Shown once ever, the first time any controller becomes active — a short "here's what exists"
      *  screen (radial, emotes, zoom, cámara libre...) so a growing feature list doesn't just live
      *  buried in Ajustes Globales waiting to be stumbled on. See OnboardingScreen. */
     public boolean hasSeenOnboarding = false;
 
-    // Preferred controller (by name) — auto-activated whenever it's detected. Stable across
-    // reconnects (handles/instance ids change, names don't). Empty = no preference.
+    /**
+     * Preferred ("Default") controller, by PERSISTENT IDENTITY key — auto-activated whenever it is
+     * detected. See {@link dev.steampad.service.ControllerIdentity}: the key is built from the USB
+     * vendor/product pair (plus the serial when SDL can read one), so it survives reconnects, restarts
+     * and backend switches, and it distinguishes two pads of the same model.
+     *
+     * <p>Replaces matching by display NAME, which is what made "no lo recuerda como predeterminado"
+     * happen: the same 8BitDo reports a different name string depending on the backend that enumerated
+     * it and on which compatibility mode it powered on in, so an exact-string comparison against a name
+     * saved in an earlier session simply failed and the default silently did not apply. Empty = no
+     * preference. {@link #preferredControllerName} is kept only to migrate an existing setting once.
+     */
+    public String preferredControllerId = "";
+
+    /** @deprecated superseded by {@link #preferredControllerId}; read once at startup to migrate a
+     *  pre-existing preference, then cleared. Never write this. */
+    @Deprecated
     public String preferredControllerName = "";
 
     public enum BlockReachAround {

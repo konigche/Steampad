@@ -1,20 +1,21 @@
 package dev.steampad.input;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import dev.steampad.compat.mc.InventoryCompat;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.GameMenuScreen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
+import dev.steampad.util.SmoothValue;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 
 /**
  * Gameplay + GUI input driver for fallback controllers (GLFW or SDL3), reading a normalized
  * {@link GamepadSnapshot} so it is backend-agnostic. This is what makes the controller actually
  * <em>do</em> something on Bazzite / Steam Deck / ROG Ally / 8BitDo, where Steam Input never inits.
  *
- * <p>Drives the game through vanilla {@link KeyBinding}s — held actions (movement, mining, using,
+ * <p>Drives the game through vanilla {@link KeyMapping}s — held actions (movement, mining, using,
  * jump, sneak, sprint) via {@code setKeyPressed}, discrete actions via {@code onKeyPressed}, camera
  * via {@code changeLookDirection}. Default layout is Xbox-style. Only one controller is active at a
  * time (project constraint), so a single set of edge/toggle state is sufficient.
@@ -43,6 +44,19 @@ public final class GamepadInputDispatcher {
 
     private static boolean sneakToggled = false;
     private static boolean sprintToggled = false;
+
+    /** Left-stick smoother for {@link #applyMountedSteeringSmoothing} — persists across ticks so the
+     *  filter has continuity; kept primed at the raw stick position while on foot (see that method). */
+    private static final SmoothValue.Vec2 mountedSteeringSmoother = new SmoothValue.Vec2();
+
+    /**
+     * The PERSISTENT sprint-toggle state, for the debug dump. Deliberately separate from
+     * {@code ControllerInputState.sprint()}, which {@code onGuiOpened()} zeroes — so a dump generated
+     * from inside a settings screen (i.e. every dump a player can actually produce) always reported
+     * {@code false} there and could not distinguish "the toggle never turned on" from "the toggle is on
+     * but something downstream is eating it". That ambiguity cost a diagnosis round.
+     */
+    public static boolean isSprintToggled() { return sprintToggled; }
 
     // Splitscreen (window-tiling) chord: hold Select (BACK) + press RB to cycle window layouts (see
     // WindowArrangeController). This only changes behavior while GlobalConfig.windowArrangeEnabled is
@@ -86,6 +100,8 @@ public final class GamepadInputDispatcher {
     /** Same, for the independent emote wheel (FASE 63 decoupling — its own controller, own
      *  open/close edge, so a held EMOTE_WHEEL button can't bleed into gameplay either). */
     private static boolean wasEmoteOpen = false;
+    /** Same, for the Item Radial (LB/RB, see dev.steampad.itemradial). */
+    private static boolean wasItemRadialOpen = false;
 
     /** Arms suppression for everything currently held (called when a GUI/radial closes). */
     private static void armHeldSuppression() {
@@ -110,9 +126,6 @@ public final class GamepadInputDispatcher {
         int i = GamepadBinds.index(buttonId);
         return i >= 0 && suppressHeld[i];
     }
-    /** Tracks text-field focus edge so the keyboard auto-opens once when a field gains focus. */
-    private static boolean prevKbEligible = false;
-
     // Hold state for virtual-mouse drag support (cursor-visible mode only).
     private static boolean virtualLmbDown = false;
     private static boolean virtualRmbDown = false;
@@ -129,7 +142,7 @@ public final class GamepadInputDispatcher {
 
     /** Entry point — called from the client tick when the active controller is a fallback handle. */
     public static void tick(long handle) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
 
         // Self-heal: captureMode may only legitimately be true while BindingsScreen owns the rebind
         // capture UI (it's the only class that ever sets it). If vanilla's focus-loss auto-pause
@@ -140,7 +153,7 @@ public final class GamepadInputDispatcher {
         // to navigate ANY subsequent menu with the gamepad, not just get back into the settings
         // screen. Enforcing the invariant here recovers unconditionally, regardless of how the
         // screen actually got swapped out from under the capture flow.
-        if (captureMode && !(mc.currentScreen instanceof dev.steampad.screen.BindingsScreen)) {
+        if (captureMode && !(mc.screen instanceof dev.steampad.screen.BindingsScreen)) {
             captureMode = false;
         }
 
@@ -166,17 +179,20 @@ public final class GamepadInputDispatcher {
         tickWindowArrangeChord();   // Select+RB splitscreen window cycling — before GUI/gameplay dispatch
         tickChordModifierGate(cfg); // user-configured chords: modifier buttons defer their own plain bind
         if (hasActivity()) InputRouter.markGamepad();   // any pad input → controller is the active device
-        boolean screenOpen = mc.currentScreen != null;
+        boolean screenOpen = mc.screen != null;
         updateHeldSuppression();
 
         // Radial closed this tick → the buttons still held (A that activated a slot, the open
         // button…) must not become gameplay held-actions.
         boolean radialOpen = dev.steampad.radial.RadialMenuController.isOpen();
         boolean emoteOpen = dev.steampad.emote.EmoteWheelController.isOpen();
+        boolean itemRadialOpen = dev.steampad.itemradial.ItemRadialController.isOpen();
         if (wasRadialOpen && !radialOpen) armHeldSuppression();
         if (wasEmoteOpen && !emoteOpen) armHeldSuppression();
+        if (wasItemRadialOpen && !itemRadialOpen) armHeldSuppression();
         wasRadialOpen = radialOpen;
         wasEmoteOpen = emoteOpen;
+        wasItemRadialOpen = itemRadialOpen;
 
         if (screenOpen) {
             if (!wasScreenOpen) onGuiOpened();
@@ -199,11 +215,25 @@ public final class GamepadInputDispatcher {
         // physical-button gating below (suppression/chord/zoom-repurpose don't apply to it; there's no
         // real button behind it) so it behaves exactly like a dedicated physical button would.
         if (VirtualBindInput.isHeld(bind)) return true;
-        // A held button that just closed a menu stays suppressed until physically released.
+        // A held button that just closed a menu stays suppressed until physically released — except
+        // SPRINT (feedback, D173 cont.: "corro... no funciona, funciona hasta que... presiono rueda
+        // radial y rapidamente suelto"). armHeldSuppression() blanket-suppresses EVERY button held at
+        // the moment ANY screen/wheel closes, not just the one that did the closing — and since SPRINT
+        // is a HOLD-mode bind meant to be held continuously for the whole walk, it is trivially likely
+        // to already be held when some unrelated screen (ControllerSelectScreen, a wheel, the pause
+        // menu) closes. Once caught, it stays suppressed until the stick is physically released once —
+        // silently killing sprint for the rest of that hold. The "fix" the user found (open/close the
+        // radial wheel) worked only because armHeldSuppression() re-arms from the CURRENT held state:
+        // if the stick happened to not be held at that exact instant, it overwrote the stale
+        // suppression with false — a coincidence of timing, not a real workaround. Unlike attack/use/
+        // jump (the actual bleed this guards against — see the field doc above), a stray "still
+        // sprinting" read the instant a menu closes has no harmful side effect, so SPRINT does not
+        // need this gate at all.
         String btn = GamepadBinds.button(cfg, bind);
-        if (isSuppressed(btn)) return false;
+        if (bind != GamepadBinds.Bind.SPRINT && isSuppressed(btn)) return false;
         if (zoomEatsDpad(cfg, bind)) return false;
         if (thirdPersonAdjustEatsDpad(cfg, bind)) return false;
+        if (emoteEatsDpad(cfg, bind)) return false;
         // This button is someone ELSE's chord modifier and is currently completing that chord — a
         // plain held-type bind on it must not also fire for the rest of the hold (see tickChordModifierGate).
         if (GamepadBinds.chord(cfg, bind).isEmpty() && isChordModifierButton(cfg, btn)
@@ -217,6 +247,7 @@ public final class GamepadInputDispatcher {
         if (VirtualBindInput.isPressedEdge(bind)) return true;
         if (zoomEatsDpad(cfg, bind)) return false;
         if (thirdPersonAdjustEatsDpad(cfg, bind)) return false;
+        if (emoteEatsDpad(cfg, bind)) return false;
         String btn = GamepadBinds.button(cfg, bind);
         // A bind currently resolved to BACK (default: PERSPECTIVE) defers to the Splitscreen chord's
         // release-signal instead of firing on BACK's press edge — see tickWindowArrangeChord().
@@ -231,7 +262,18 @@ public final class GamepadInputDispatcher {
         // edge to release broke "hold to open" for any bind sharing a button with someone else's chord
         // modifier (feedback: "DUP... si lo mantengo presionado, lo suelto y se abre y se cierra").
         if (!bind.held && GamepadBinds.chord(cfg, bind).isEmpty() && isChordModifierButton(cfg, btn)) {
-            return modifierTapReleasedThisTick.getOrDefault(btn, false);
+            // Composes with the long-press gate below: when the button is BOTH a chord modifier and a
+            // long-press host, the tap needs a clean release from each — an AND, the same one
+            // tickPauseLongPress already uses. Either gate alone would let the other's gesture leak.
+            return modifierTapReleasedThisTick.getOrDefault(btn, false)
+                    && (!LongPressGate.claims(btn) || LongPressGate.tapReleased(btn));
+        }
+        // A live long-press binding on this button (see LongPressGate): the ordinary bind defers to a
+        // short release, so "mantener X = recargar" leaves "tocar X = cambiar de mano" intact. Scoped
+        // to tap binds for the same reason the chord gate above is — deferring a held-type bind's edge
+        // breaks hold-to-open, which is why the gate refuses those buttons in the first place.
+        if (!bind.held && LongPressGate.claims(btn)) {
+            return LongPressGate.tapReleased(btn);
         }
         return GamepadBinds.pressed(cur, prevButtons, prevLt, prevRt, cfg, bind);
     }
@@ -243,6 +285,9 @@ public final class GamepadInputDispatcher {
      */
     private static boolean zoomEatsDpad(ControllerConfig cfg, GamepadBinds.Bind bind) {
         if (bind == GamepadBinds.Bind.ZOOM) return false;   // the zoom bind itself may live on the D-pad
+        // The level controls ARE the repurposing — asking whether they're repurposed would suppress
+        // exactly the two binds that are supposed to be running.
+        if (bind == GamepadBinds.Bind.ZOOM_IN || bind == GamepadBinds.Bind.ZOOM_OUT) return false;
         return ZoomController.isButtonRepurposed(cfg, GamepadBinds.button(cfg, bind));
     }
 
@@ -253,6 +298,21 @@ public final class GamepadInputDispatcher {
      */
     private static boolean thirdPersonAdjustEatsDpad(ControllerConfig cfg, GamepadBinds.Bind bind) {
         if (bind == GamepadBinds.Bind.THIRD_PERSON_ADJUST || !ThirdPersonCameraController.isAdjusting()) return false;
+        String btn = GamepadBinds.button(cfg, bind);
+        return "DUP".equals(btn) || "DDOWN".equals(btn);
+    }
+
+    /**
+     * While a REAL emote plays, D-pad ↑/↓ belong exclusively to the emote camera zoom (D122) — same
+     * button-based suppression shape as the two above, so ANY standard bind the user has resolved onto
+     * DUP/DDOWN goes quiet for the dance's duration (round-4 hardware report: "si presiono tambien hace
+     * lo asignado en gameplay"). Nothing to restore afterward: the suppression exists only while
+     * {@code isLocalRealEmotePlaying()} is true, so the user's own assignment fires again on the very
+     * next tick after the emote ends, untouched. Extra binds get the same treatment separately in
+     * {@code dispatchExtraBinds} (the {@code emoteZooming} check there).
+     */
+    private static boolean emoteEatsDpad(ControllerConfig cfg, GamepadBinds.Bind bind) {
+        if (!dev.steampad.emote.EmoteAnimator.isLocalRealEmotePlaying()) return false;
         String btn = GamepadBinds.button(cfg, bind);
         return "DUP".equals(btn) || "DDOWN".equals(btn);
     }
@@ -340,7 +400,7 @@ public final class GamepadInputDispatcher {
 
     // ---- In-game ---------------------------------------------------------------------------
 
-    private static void tickInGame(MinecraftClient mc, ControllerConfig cfg, long handle) {
+    private static void tickInGame(Minecraft mc, ControllerConfig cfg, long handle) {
         if (mc.player == null) {
             releaseAllMovement(mc);
             return;
@@ -359,10 +419,10 @@ public final class GamepadInputDispatcher {
         //     invisible: same dead-camera symptom, but layer (1) can't see it. Controlify's rule is
         //     the model here: never fight the grab, and in gameplay the grab must really be applied.
         //     glfwGetInputMode is a trivial getter — negligible at 20 Hz.
-        if (!mc.mouse.isCursorLocked() && mc.isWindowFocused()) {
-            mc.mouse.lockCursor();
-        } else if (mc.mouse.isCursorLocked()) {
-            long win = mc.getWindow().getHandle();
+        if (!mc.mouseHandler.isMouseGrabbed() && mc.isWindowActive()) {
+            mc.mouseHandler.grabMouse();
+        } else if (mc.mouseHandler.isMouseGrabbed()) {
+            long win = dev.steampad.compat.mc.WindowCompat.handle(mc.getWindow());
             if (org.lwjgl.glfw.GLFW.glfwGetInputMode(win, org.lwjgl.glfw.GLFW.GLFW_CURSOR)
                     != org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED) {
                 org.lwjgl.glfw.GLFW.glfwSetInputMode(win, org.lwjgl.glfw.GLFW.GLFW_CURSOR,
@@ -383,11 +443,17 @@ public final class GamepadInputDispatcher {
         // own axis goes silent, so without this merge that binding would kill the camera (B075).
         right = mergeStick(right, SteamSlotDispatcher.steamRightX(), SteamSlotDispatcher.steamRightY());
 
+        // Movement intent is applied UNCONDITIONALLY, before any wheel-open branch below — feedback:
+        // "que aunque esté la rueda te puedas seguir moviendo" (Emotes/Menú Radial/Rueda de Objetos
+        // all included). Jump/sneak/sprint are deliberately left OUT while a wheel is open (see
+        // applyMovementIntent) since their default buttons (A/B) are busy driving the wheel itself.
+        applyMovementIntent(mc, cfg);
+
         // Radial menu: hold its bound button to open, right stick selects, release executes.
-        // The dedicated EMOTE WHEEL (FASE 63) is a fully independent wheel system as of the
-        // decoupling — its own EmoteWheelController, own config list, own open/close state — so the
-        // two branches below never touch each other's selection/carousel state, and only one of the
-        // two can be open at a time (each branch returns before the other bind is ever checked).
+        // The dedicated EMOTE WHEEL (FASE 63) and the Item Radial (LB/RB, dev.steampad.itemradial) are
+        // fully independent wheel systems — their own controller, own config/scan, own open/close
+        // state — so the three branches below never touch each other's selection/carousel state, and
+        // only one of the three can be open at a time (each branch returns before the next is checked).
         if (dev.steampad.radial.RadialMenuController.isOpen()) {
             dev.steampad.radial.RadialMenuController.updateAnalog(right[0], right[1]);
             // LB/RB: carousel to the other wheel when a second one is configured (E10).
@@ -439,6 +505,36 @@ public final class GamepadInputDispatcher {
             }
             return;   // suspend all other gameplay input while the emote wheel is open
         }
+        if (dev.steampad.itemradial.ItemRadialController.isOpen()) {
+            dev.steampad.itemradial.ItemRadialController.updateAnalog(right[0], right[1]);
+            // No carousel between the two pages (hardware feedback, D127): LB/RB do nothing while
+            // either wheel is open — each bumper only opens/closes its OWN wheel (see below).
+            // A: context-sensitive confirm (drill into a category, or just close on a leaf level —
+            // the live preview already applied the equip as focus moved, see ItemRadialController
+            // class doc). No submenu screen ever opens: a category "morphs" the SAME ring in place.
+            if (pressed(GamepadSnapshot.A)) {
+                dev.steampad.itemradial.ItemRadialController.pressConfirm();
+                releaseAllMovement(mc);
+                return;
+            }
+            // B: back out of a category morph one level WITHOUT closing (no-op at the top level —
+            // releasing the opening bumper is how the top level cancels, matching the other wheels).
+            if (pressed(GamepadSnapshot.B)) {
+                dev.steampad.itemradial.ItemRadialController.pressBack();
+                return;
+            }
+            // Closes only when the SPECIFIC bumper that opened this wheel is released — RB=Hotbar,
+            // LB=Inventory (swapped from the original LB/RB assignment per hardware feedback, D127).
+            // No cross-bumper flip anymore, so only that one bind's release matters.
+            GamepadBinds.Bind openingBind = dev.steampad.itemradial.ItemRadialController.getRootPage()
+                    == dev.steampad.itemradial.ItemRadialController.Page.HOTBAR
+                    ? GamepadBinds.Bind.HOTBAR_NEXT : GamepadBinds.Bind.HOTBAR_PREV;
+            if (!bHeld(cfg, openingBind)) {
+                dev.steampad.itemradial.ItemRadialController.close();
+                releaseAllMovement(mc);
+            }
+            return;   // suspend all other gameplay input while the item radial is open
+        }
         if (bPressed(cfg, GamepadBinds.Bind.RADIAL)) {
             dev.steampad.radial.RadialMenuController.open(handle);
             releaseAllMovement(mc);
@@ -450,6 +546,19 @@ public final class GamepadInputDispatcher {
             return;
         }
 
+        // Point 3/D122: while a REAL emote plays, D-pad up/down is reserved for the emote's own
+        // camera-DISTANCE zoom (ThirdPersonCameraController) — deliberately checked FIRST and used to
+        // gate the two other D-pad-repurposing blocks below, so a stray zoom-toggle or
+        // THIRD_PERSON_ADJUST hold left on from before the dance started can't also fire on the same
+        // press. This is its own system precisely so it never combines with ZoomController's FOV zoom
+        // (feedback: "no debemos de combinarlo con el zoom del juego actual") — different button
+        // action, different underlying mechanism (camera distance vs. FOV), zero shared state.
+        boolean emoting = dev.steampad.emote.EmoteAnimator.isLocalRealEmotePlaying();
+        if (emoting) {
+            if (pressed(GamepadSnapshot.DPAD_UP))   dev.steampad.input.ThirdPersonCameraController.adjustEmoteZoom(+1);
+            if (pressed(GamepadSnapshot.DPAD_DOWN)) dev.steampad.input.ThirdPersonCameraController.adjustEmoteZoom(-1);
+        }
+
         // Zoom (BetterZoom-style, ZoomController): hold or toggle per config; while active, D-pad
         // ↑/↓ steps the level (their normal bind actions are suppressed via zoomEatsDpad).
         if (cfg.zoomHoldMode) {
@@ -457,9 +566,18 @@ public final class GamepadInputDispatcher {
         } else if (bPressed(cfg, GamepadBinds.Bind.ZOOM)) {
             ZoomController.toggle();
         }
-        if (ZoomController.isZooming() && cfg.zoomDpadAdjust) {
-            if (pressed(GamepadSnapshot.DPAD_UP))   ZoomController.adjust(+1, cfg, mc);
-            if (pressed(GamepadSnapshot.DPAD_DOWN)) ZoomController.adjust(-1, cfg, mc);
+        if (!emoting && ZoomController.isZooming() && cfg.zoomDpadAdjust) {
+            // Through the bind system now (defaults still DUP/DDOWN), so the level controls can be
+            // moved anywhere. CONTINUOUS mode reads the held state and ramps every tick; STEPPED mode
+            // keeps the original one-step-per-press edge. Both go through bPressed/bHeld, which is what
+            // keeps chords, suppression and the Steam Input slots working on these two like any bind.
+            if (cfg.zoomContinuous) {
+                if (bHeld(cfg, GamepadBinds.Bind.ZOOM_IN))  ZoomController.adjustContinuous(+1, cfg, mc);
+                if (bHeld(cfg, GamepadBinds.Bind.ZOOM_OUT)) ZoomController.adjustContinuous(-1, cfg, mc);
+            } else {
+                if (bPressed(cfg, GamepadBinds.Bind.ZOOM_IN))  ZoomController.adjust(+1, cfg, mc);
+                if (bPressed(cfg, GamepadBinds.Bind.ZOOM_OUT)) ZoomController.adjust(-1, cfg, mc);
+            }
         }
         // A while zoomed = drop the temporary "let's go there" beacon (see ZoomController).
         if (ZoomController.isZooming() && cfg.zoomMarkerEnabled && pressed(GamepadSnapshot.A)) {
@@ -467,31 +585,8 @@ public final class GamepadInputDispatcher {
         }
         ZoomController.tick(mc, cfg, handle);
 
-        // Left stick → ANALOG movement intent (applied to the player's movement vector by the
-        // KeyboardInput mixin, so a gentle push walks slowly and a full push runs — console feel).
-        float[] left = DeadzoneProcessor.process(
-                new float[]{cur.axis(GamepadSnapshot.AXIS_LEFT_X), cur.axis(GamepadSnapshot.AXIS_LEFT_Y)},
-                cfg.leftStickDeadzone);
-        // Same Steam Input merge as the camera above, for "Joystick izquierdo — Mover" (B075).
-        left = mergeStick(left, SteamSlotDispatcher.steamLeftX(), SteamSlotDispatcher.steamLeftY());
-
-        // Sneak (hold or toggle).
-        boolean sneak;
-        if (cfg.sneakMode == ControllerConfig.SneakMode.TOGGLE) {
-            if (bPressed(cfg, GamepadBinds.Bind.SNEAK)) sneakToggled = !sneakToggled;
-            sneak = sneakToggled;
-        } else {
-            sneak = bHeld(cfg, GamepadBinds.Bind.SNEAK);
-        }
-        // Sprint (hold or toggle).
-        boolean sprint;
-        if (cfg.sprintMode == ControllerConfig.SprintMode.TOGGLE) {
-            if (bPressed(cfg, GamepadBinds.Bind.SPRINT)) sprintToggled = !sprintToggled;
-            sprint = sprintToggled;
-        } else {
-            sprint = bHeld(cfg, GamepadBinds.Bind.SPRINT);
-        }
-        ControllerInputState.set(-left[0], -left[1], bHeld(cfg, GamepadBinds.Bind.JUMP), sneak, sprint);
+        // (Movement intent was already applied above, unconditionally, by applyMovementIntent —
+        // before any wheel-open branch could suspend the rest of this method.)
 
         // Mine / use / player list (held) — written EDGE-TRIGGERED, not every tick. A continuous
         // "false" write while the pad is idle releases the KeyBinding state the PHYSICAL mouse set
@@ -499,9 +594,9 @@ public final class GamepadInputDispatcher {
         // pad only touches the key state when ITS OWN held-state changes.
         boolean attackHeldNow = bHeld(cfg, GamepadBinds.Bind.ATTACK);
         boolean attackEdge = attackHeldNow && !prevAttackHeld;
-        prevAttackHeld = holdOnChange(mc.options.attackKey, attackHeldNow, prevAttackHeld);
-        prevUseHeld    = holdOnChange(mc.options.useKey,    bHeld(cfg, GamepadBinds.Bind.USE),    prevUseHeld);
-        prevListHeld   = holdOnChange(mc.options.playerListKey, bHeld(cfg, GamepadBinds.Bind.PLAYER_LIST), prevListHeld);
+        prevAttackHeld = holdOnChange(mc.options.keyAttack, attackHeldNow, prevAttackHeld);
+        prevUseHeld    = holdOnChange(mc.options.keyUse,    bHeld(cfg, GamepadBinds.Bind.USE),    prevUseHeld);
+        prevListHeld   = holdOnChange(mc.options.keyPlayerList, bHeld(cfg, GamepadBinds.Bind.PLAYER_LIST), prevListHeld);
 
         // Bedrock-style hold-to-swing (user-approved): while ATTACK stays held and the crosshair is
         // NOT on a block (block mining keeps vanilla's continuous path untouched), register a new
@@ -510,26 +605,30 @@ public final class GamepadInputDispatcher {
         // vanilla consumed input this tick, so each tap is processed next tick, which resets the
         // cooldown — the >= 1.0 gate self-paces to the weapon's real speed with no extra timer.
         if (cfg.attackAutoRepeat && attackHeldNow && !attackEdge
-                && !(mc.crosshairTarget != null
-                        && mc.crosshairTarget.getType() == net.minecraft.util.hit.HitResult.Type.BLOCK)
-                && mc.player.getAttackCooldownProgress(0f) >= 1.0f) {
-            tap(mc.options.attackKey);
+                && !(mc.hitResult != null
+                        && mc.hitResult.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK)
+                && mc.player.getAttackStrengthScale(0f) >= 1.0f) {
+            tap(mc.options.keyAttack);
         }
 
         // (Camera look is applied per-frame in CameraController; jump/sneak/sprint/move via the mixin.)
 
         // Discrete (edge) actions.
-        if (bPressed(cfg, GamepadBinds.Bind.INVENTORY))   tap(mc.options.inventoryKey);
-        if (bPressed(cfg, GamepadBinds.Bind.SWAP_HANDS))  tap(mc.options.swapHandsKey);
-        if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_PREV)) cycleHotbar(mc, -1);
-        if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_NEXT)) cycleHotbar(mc, +1);
-        if (bPressed(cfg, GamepadBinds.Bind.DROP))        tap(mc.options.dropKey);
-        if (bPressed(cfg, GamepadBinds.Bind.PERSPECTIVE)) tap(mc.options.togglePerspectiveKey);
-        if (bPressed(cfg, GamepadBinds.Bind.CHAT))        tap(mc.options.chatKey);
+        if (bPressed(cfg, GamepadBinds.Bind.INVENTORY))   tap(mc.options.keyInventory);
+        if (bPressed(cfg, GamepadBinds.Bind.SWAP_HANDS))  tap(mc.options.keySwapOffhand);
+        tickHotbarRadialOrClassic(mc, cfg, handle);
+        if (bPressed(cfg, GamepadBinds.Bind.DROP))        tap(mc.options.keyDrop);
+        // D123: the gamepad perspective cycle runs through the same 220ms "camera leaves/re-enters
+        // the body" ease the emote auto-switch uses, instead of vanilla's instant cut (round-4 ask:
+        // "tambien agregacelo cuando se cambia a tercera persona y a primera"). Keyboard F5 is
+        // deliberately untouched.
+        if (bPressed(cfg, GamepadBinds.Bind.PERSPECTIVE))
+            dev.steampad.input.PerspectiveTransition.cyclePerspective(mc);
+        if (bPressed(cfg, GamepadBinds.Bind.CHAT))        tap(mc.options.keyChat);
         tickPauseLongPress(mc, cfg);   // PAUSE: tap = pause menu (on release), long hold = binds overlay
-        if (bPressed(cfg, GamepadBinds.Bind.PICK_BLOCK))  tap(mc.options.pickItemKey);
-        if (bPressed(cfg, GamepadBinds.Bind.SCREENSHOT))  tap(mc.options.screenshotKey);
-        if (bPressed(cfg, GamepadBinds.Bind.HUD_TOGGLE))  mc.options.hudHidden = !mc.options.hudHidden;
+        if (bPressed(cfg, GamepadBinds.Bind.PICK_BLOCK))  tap(mc.options.keyPickItem);
+        if (bPressed(cfg, GamepadBinds.Bind.SCREENSHOT))  tap(mc.options.keyScreenshot);
+        if (bPressed(cfg, GamepadBinds.Bind.HUD_TOGGLE))  mc.options.hideGui = !mc.options.hideGui;
         if (bPressed(cfg, GamepadBinds.Bind.THIRD_PERSON_SIDE_CYCLE))
             dev.steampad.input.ThirdPersonCameraController.cycleSide();
         if (bPressed(cfg, GamepadBinds.Bind.THIRD_PERSON_FREE_LOOK_TOGGLE))
@@ -540,16 +639,22 @@ public final class GamepadInputDispatcher {
         } else if (!adjustHeld && dev.steampad.input.ThirdPersonCameraController.isAdjusting()) {
             dev.steampad.input.ThirdPersonCameraController.endAdjust();
         }
-        if (dev.steampad.input.ThirdPersonCameraController.isAdjusting()) {
+        // !emoting (point 3/D122): a real emote owns D-pad up/down unconditionally (see the block near
+        // the top of this method) — guarded here too in case THIRD_PERSON_ADJUST happened to already
+        // be held going into the dance, so the two systems can never both react to the same press.
+        if (!emoting && dev.steampad.input.ThirdPersonCameraController.isAdjusting()) {
             if (pressed(GamepadSnapshot.DPAD_UP))   dev.steampad.input.ThirdPersonCameraController.adjustDistance(+1);
             if (pressed(GamepadSnapshot.DPAD_DOWN)) dev.steampad.input.ThirdPersonCameraController.adjustDistance(-1);
         }
         // Body-facing "rotate strategy" for the free camera — see ThirdPersonCameraController's own
-        // scope note. No-ops entirely unless free-look is on.
+        // scope note. No-ops entirely unless free-look is on. The AIMING case now has its own earlier
+        // entry point (tickAimFacing, called from START_CLIENT_TICK in SteamPadClient, point 5/D122) —
+        // this call still covers interacting/idle-rotate-mode exactly as before; it simply no-ops for
+        // the aiming case now instead of handling it here too.
         dev.steampad.input.ThirdPersonCameraController.tickRotateStrategy(mc,
                 bHeld(cfg, GamepadBinds.Bind.ATTACK) || bHeld(cfg, GamepadBinds.Bind.USE));
         if (bPressed(cfg, GamepadBinds.Bind.DROP_STACK) && mc.player != null) {
-            mc.player.dropSelectedItem(true);
+            mc.player.drop(true);
         }
         if (bPressed(cfg, GamepadBinds.Bind.GYRO_TOGGLE)) {
             cfg.gyroEnabled = !cfg.gyroEnabled;
@@ -587,7 +692,7 @@ public final class GamepadInputDispatcher {
      * be a long-press candidate — the modifier hold would fight the overlay hold). Slot-assigned
      * virtual PAUSE presses stay instant via {@link VirtualBindInput}.
      */
-    private static void tickPauseLongPress(MinecraftClient mc, ControllerConfig cfg) {
+    private static void tickPauseLongPress(Minecraft mc, ControllerConfig cfg) {
         if (VirtualBindInput.isPressedEdge(GamepadBinds.Bind.PAUSE)) {
             resetPauseHold();
             PauseGate.openPauseMenu(mc);
@@ -641,7 +746,7 @@ public final class GamepadInputDispatcher {
     }
 
     /** An extra (mod) keybind currently held down by a controller button. */
-    private record HeldExtra(KeyBinding kb, InputUtil.Key key, String chord) {}
+    private record HeldExtra(KeyMapping kb, InputConstants.Key key, String chord) {}
     private static final java.util.Map<String, HeldExtra> heldExtras = new java.util.HashMap<>();
 
     /**
@@ -651,7 +756,16 @@ public final class GamepadInputDispatcher {
      * push-to-talk, etc. — actually work; the old one-shot tap only served {@code wasPressed()}
      * consumers (the F13 "chords no funcionan" bug).
      */
-    private static void dispatchExtraBinds(MinecraftClient mc, ControllerConfig cfg) {
+    /**
+     * Fires the player's button→keybind bindings. Called from BOTH paths: gameplay and from inside a
+     * screen — {@link ModKeybindContext} decides which of them are relevant where, so a backpack
+     * keybind reaches the backpack and nothing else reaches a menu it has no business in.
+     *
+     * @return true if a binding fired this tick, so the GUI caller can stand down for one tick instead
+     *         of ALSO running its built-in action on the same button edge. One tick of navigation is
+     *         imperceptible; a button doing two things at once is not.
+     */
+    private static boolean dispatchExtraBinds(Minecraft mc, ControllerConfig cfg) {
         // Release pass: drop any held extra whose trigger button or required chord was released.
         for (var it = heldExtras.entrySet().iterator(); it.hasNext(); ) {
             var e = it.next();
@@ -663,14 +777,34 @@ public final class GamepadInputDispatcher {
             }
         }
 
-        if (cfg.extraBinds.isEmpty()) return;
+        // ONE flat map, as it always was — the player assigns a button once in Botones. What changes is
+        // that SteamPad now works out on its own WHERE each mod keybind is relevant (ModKeybindContext):
+        // in gameplay, and inside a screen only if that screen — or the item in hand — belongs to the
+        // same mod. That is what lets "Ordenar mochila" work in the backpack and stay silent everywhere
+        // else, with no per-context mapping for the player to do.
+        var relevant = relevantExtraBinds(mc, cfg);
+        // Long-press entries are driven by their own gate, not by the press edge below — it decides
+        // when (and whether) they fire, and tells bPressed to defer the button's ordinary bind.
+        LongPressGate.tick(mc, cfg, cur, relevant,
+                GamepadInputDispatcher::isSuppressed,
+                btn -> GamepadBinds.isHeldRaw(cur, btn));
+        if (relevant.isEmpty()) return false;
+        boolean fired = false;
         boolean zoomAdjusting = ZoomController.isZooming() && cfg.zoomDpadAdjust;
-        for (var e : cfg.extraBinds.entrySet()) {
+        // Point 3/D122: same rule as zoomAdjusting — a real emote owns D-pad ↑/↓ for its own camera
+        // zoom, so a user-configured extra bind sitting on those buttons (DROP on DDOWN by default)
+        // must stay suppressed for the dance's duration, exactly like it already does while zooming.
+        boolean emoteZooming = dev.steampad.emote.EmoteAnimator.isLocalRealEmotePlaying();
+        for (var e : relevant.entrySet()) {
             String buttonId = e.getKey();
             String keyTranslation = e.getValue();
             if (keyTranslation == null || keyTranslation.isBlank()) continue;
             // D-pad ↑/↓ belong to the zoom-level adjust while zooming — same rule as zoomEatsDpad.
             if (zoomAdjusting && ("DUP".equals(buttonId) || "DDOWN".equals(buttonId))) continue;
+            if (emoteZooming && ("DUP".equals(buttonId) || "DDOWN".equals(buttonId))) continue;
+            // Long-press entries belong to LongPressGate: firing them here too would run the action on
+            // the press edge, which is exactly what the player asked NOT to happen.
+            if (LongPressGate.claims(buttonId)) continue;
             if (!buttonEdge(buttonId)) continue;
             String chord = cfg.extraChords.getOrDefault(keyTranslation, "");
             if (!chord.isEmpty()) {
@@ -678,11 +812,70 @@ public final class GamepadInputDispatcher {
             } else if (GamepadBinds.buttonShadowedByHeldChord(cur, cfg, buttonId, null, keyTranslation)) {
                 continue;   // plain extra bind suppressed while this button has an active chord
             }
-            KeyBinding kb = findKeyBinding(mc, keyTranslation);
+            KeyMapping kb = findKeyBinding(mc, keyTranslation);
             if (kb != null && !heldExtras.containsKey(buttonId)) {
-                InputUtil.Key key = KeyTap.hold(kb);
+                InputConstants.Key key = KeyTap.hold(kb);
+                deliverToScreen(mc, kb, key, keyTranslation);
                 heldExtras.put(buttonId, new HeldExtra(kb, key, chord));
+                fired = true;
             }
+        }
+        return fired;
+    }
+
+    /**
+     * The mod bindings that are live in the player's current situation — the single view shared with
+     * {@code GameplayHudOverlay}, so what is drawn and what fires are the same set by construction.
+     */
+    public static java.util.Map<String, String> relevantExtraBinds(Minecraft mc, ControllerConfig cfg) {
+        if (cfg.extraBinds.isEmpty()) return java.util.Collections.emptyMap();
+        var out = new java.util.LinkedHashMap<String, String>();
+        for (var e : cfg.extraBinds.entrySet()) {
+            String kb = e.getValue();
+            if (kb == null || kb.isBlank()) continue;
+            if (!ModKeybindContext.isRelevant(mc, kb)) continue;
+            out.put(e.getKey(), kb);
+        }
+        return out;
+    }
+
+    /**
+     * Hands the open screen a real key event for {@code kb}, and remembers whether it took it.
+     *
+     * <p><b>Why this exists.</b> Reported: "asigné un botón para ordenar la mochila y no funciona con el
+     * mando, pero sí con el teclado". Proven in Traveler's Backpack's own bytecode: its
+     * {@code SORT_BACKPACK} is consumed inside a {@code ScreenKeyboardEvents.beforeKeyPress} handler
+     * that compares the event against {@code KeyMapping.key} — it never reads {@code isDown()} and never
+     * reads {@code consumeClick()}. So the two things {@link KeyTap#hold} already does, which are what
+     * drive every other mod shape (including the radial's D189 fix), are invisible to it. The only thing
+     * that mod listens to is a key EVENT, so that is what this sends.
+     *
+     * <p>A key event needs a key: an UNBOUND keybind has nothing to synthesise, which is a fact about
+     * this consumer shape and not a choice — the Buttons row says so rather than failing in silence.
+     *
+     * <p>The screen's own answer is the signal {@link ModKeybindContext} learns from: {@code keyPressed}
+     * returning true is the game itself saying "this binding belongs to me", which is how a screen
+     * action stops being advertised out in the world.
+     */
+    private static void deliverToScreen(Minecraft mc, KeyMapping kb, InputConstants.Key key,
+                                        String keybindName) {
+        if (mc.screen == null || key == null) return;
+        if (key.getType() != InputConstants.Type.KEYSYM) return;   // mouse buttons are not key events
+        try {
+            // Screen.keyPressed took (key, scancode, modifiers) until 1.21.2 and takes a KeyEvent
+            // record from there on (javap on both mapped jars) — the record carries the same three
+            // ints, so the call is identical in meaning on either side.
+            //? if >=1.21.2 {
+            boolean handled = mc.screen.keyPressed(
+                    new net.minecraft.client.input.KeyEvent(key.getValue(), 0, 0));
+            //?} else {
+            /*boolean handled = mc.screen.keyPressed(key.getValue(), 0, 0);*/
+            //?}
+            if (handled) ModKeybindContext.rememberScreenHandled(keybindName);
+        } catch (Throwable t) {
+            // A screen that throws on a synthetic event must not take the input tick down with it.
+            dev.steampad.util.LogUtil.debug("[SteamPad] Screen refused a synthetic key for {}: {}",
+                    keybindName, t.toString());
         }
     }
 
@@ -700,24 +893,24 @@ public final class GamepadInputDispatcher {
         return i >= 0 && cur.button(i) && !prevButtons[i];
     }
 
-    private static KeyBinding findKeyBinding(MinecraftClient mc, String translationKey) {
-        for (KeyBinding kb : mc.options.allKeys) {
-            if (kb.getId().equals(translationKey)) return kb;
+    private static KeyMapping findKeyBinding(Minecraft mc, String translationKey) {
+        for (KeyMapping kb : mc.options.keyMappings) {
+            if (kb.getName().equals(translationKey)) return kb;
         }
         return null;
     }
 
-    private static void cycleHotbar(MinecraftClient mc, int dir) {
+    private static void cycleHotbar(Minecraft mc, int dir) {
         if (mc.player == null) return;
-        int slot = (mc.player.getInventory().getSelectedSlot() + dir + 9) % 9;
-        mc.player.getInventory().setSelectedSlot(slot);
+        int slot = (InventoryCompat.getSelectedSlot(mc.player.getInventory()) + dir + 9) % 9;
+        InventoryCompat.setSelectedSlot(mc.player.getInventory(), slot);
     }
 
     /** Pad-side held state of the vanilla keys it drives (edge-triggered writes — see tickInGame). */
     private static boolean prevAttackHeld = false, prevUseHeld = false, prevListHeld = false;
 
     /** Writes the KeyBinding state only when the pad's own held-state changed. Returns {@code down}. */
-    private static boolean holdOnChange(KeyBinding key, boolean down, boolean prev) {
+    private static boolean holdOnChange(KeyMapping key, boolean down, boolean prev) {
         if (down != prev) {
             hold(key, down);
             // Mirror vanilla Mouse.onMouseButton exactly: a press sets the held state AND registers
@@ -730,15 +923,200 @@ public final class GamepadInputDispatcher {
         return down;
     }
 
-    private static void releaseAllMovement(MinecraftClient mc) {
+    /**
+     * Left stick → analog movement intent, jump/sneak/sprint — applied UNCONDITIONALLY every tick,
+     * including while a wheel (Emotes/Menú Radial/Item Radial) is open (feedback: "que aunque esté la
+     * rueda te puedas seguir moviendo"). While ANY wheel is open, jump/sneak are forced off and sprint
+     * toggling doesn't advance: their default buttons (A/B) are busy driving the wheel itself (confirm/
+     * back), so letting them double-fire would jump/sneak the player the instant they pick a slot. This
+     * exactly matches the PREVIOUS behaviour for jump/sneak/sprint while a wheel was open (they were
+     * simply never reached, since every wheel branch used to {@code return} before this block) — only
+     * the movement vector itself is now new.
+     */
+    private static void applyMovementIntent(Minecraft mc, ControllerConfig cfg) {
+        float[] left = DeadzoneProcessor.process(
+                new float[]{cur.axis(GamepadSnapshot.AXIS_LEFT_X), cur.axis(GamepadSnapshot.AXIS_LEFT_Y)},
+                cfg.leftStickDeadzone);
+        // Same Steam Input merge as the camera, for "Joystick izquierdo — Mover" (B075).
+        left = mergeStick(left, SteamSlotDispatcher.steamLeftX(), SteamSlotDispatcher.steamLeftY());
+        left = shapeMountedSteering(mc, cfg, left);
+
+        boolean anyWheelOpen = dev.steampad.radial.RadialMenuController.isOpen()
+                || dev.steampad.emote.EmoteWheelController.isOpen()
+                || dev.steampad.itemradial.ItemRadialController.isOpen();
+        if (anyWheelOpen) {
+            ControllerInputState.set(-left[0], -left[1], false, false, false);
+            return;
+        }
+
+        // Sneak (hold or toggle).
+        boolean sneak;
+        if (cfg.sneakMode == ControllerConfig.SneakMode.TOGGLE) {
+            if (bPressed(cfg, GamepadBinds.Bind.SNEAK)) sneakToggled = !sneakToggled;
+            sneak = sneakToggled;
+        } else {
+            sneak = bHeld(cfg, GamepadBinds.Bind.SNEAK);
+        }
+        // Sprint (hold or toggle).
+        boolean sprint;
+        if (cfg.sprintMode == ControllerConfig.SprintMode.TOGGLE) {
+            if (bPressed(cfg, GamepadBinds.Bind.SPRINT)) sprintToggled = !sprintToggled;
+            sprint = sprintToggled;
+        } else {
+            sprint = bHeld(cfg, GamepadBinds.Bind.SPRINT);
+        }
+        ControllerInputState.set(-left[0], -left[1], bHeld(cfg, GamepadBinds.Bind.JUMP), sneak, sprint);
+    }
+
+    /**
+     * Shapes the left stick's (x, y) ONLY while {@link ThirdPersonCameraController#isMounted} — see
+     * {@link ControllerConfig#mountedSteeringCurve} for the feedback that motivated this. On foot the
+     * deadzone-processed values pass through byte-for-byte unchanged; walking must never feel
+     * different because of this method.
+     *
+     * <p>Two filters, because the complaint has two independent causes:
+     * <ul>
+     *   <li><b>Exponential smoothing</b> ({@link SmoothValue}, the same tick-rate-correct filter the
+     *       camera uses) — absorbs genuine hand tremor.</li>
+     *   <li><b>Axial dead band on the lateral axis</b> ({@link DeadzoneProcessor#applyAxialDeadzone}) —
+     *       gives the stick a real "straight ahead", which the circular deadzone cannot (it only zeroes
+     *       near the stick's CENTRE and above that preserves the vector's angle exactly). This is the
+     *       fix for "si empujo el stick izq al frente siempre se va de lado".</li>
+     * </ul>
+     *
+     * <p><b>The dead band is applied AFTER the smoothing, and that order is load-bearing.</b> Reversed,
+     * the smoother would be handed a zero lateral target and would only ever ease toward it
+     * asymptotically — handing vanilla a small nonzero lateral for as long as the player kept driving,
+     * which is precisely the residue this exists to eliminate. Filtering last makes the zero exact.
+     *
+     * <p><b>Released stick snaps to exact zero</b> rather than easing out, and that is load-bearing in
+     * two separate ways. Exponential decay never actually reaches zero: at the default halflife it
+     * retains {@code 0.5^(0.05/0.08) = 0.648} per tick, so a full push stays above the {@code 0.02}
+     * threshold {@code KeyboardInputMixin} uses to decide the stick "is moving" for about ten ticks
+     * (half a second). During that window the mixin OVERWRITES vanilla's keyboard movement vector, so
+     * WASD went dead for half a second after every stick release while mounted, and the vehicle kept
+     * turning after the stick was already centred. Both are wrong: letting go of the wheel must stop
+     * the turn immediately — return-to-centre lag is not something a driving game wants anyway.
+     *
+     * <p>Called exactly once per client tick ({@link #applyMovementIntent} ← {@code tickInGame} ←
+     * {@code END_CLIENT_TICK}; see this class's own doc, "All calls run on the render thread (the
+     * client tick)"), matching {@link SmoothValue}'s documented contract.
+     *
+     * <p>While NOT mounted, the smoother is kept primed at the current raw stick position every tick
+     * (rather than left stale) so that boarding a vehicle never eases in from wherever the stick
+     * happened to sit at the last dismount — the same "seed so nothing eases in from stale state" idiom
+     * {@link SmoothValue.Scalar#set} already documents for the camera.
+     */
+    private static float[] shapeMountedSteering(Minecraft mc, ControllerConfig cfg, float[] left) {
+        mountedRawLateral = left[0];
+        mountedRawForward = left[1];
+        if (!ThirdPersonCameraController.isMounted(mc)) {
+            mountedSteeringSmoother.set(left[0], left[1]);
+            mountedShapedLateral = left[0];
+            mountedShapedForward = left[1];
+            return left;
+        }
+        // Stick released (the circular deadzone outputs an exact 0,0 below its radius): stop NOW.
+        if (left[0] == 0f && left[1] == 0f) {
+            mountedSteeringSmoother.set(0.0, 0.0);
+            mountedShapedLateral = 0f;
+            mountedShapedForward = 0f;
+            return left;
+        }
+        mountedSteeringSmoother.setHalflife(cfg.mountedSteeringSmoothing);
+        mountedSteeringSmoother.setTarget(left[0], left[1]);
+        mountedSteeringSmoother.update(0.05);
+        float lateral = DeadzoneProcessor.applyAxialDeadzone(
+                (float) mountedSteeringSmoother.getX(1f), cfg.mountedSteeringDeadzone);
+        float forward = (float) mountedSteeringSmoother.getY(1f);
+        mountedShapedLateral = lateral;
+        mountedShapedForward = forward;
+        return new float[]{lateral, forward};
+    }
+
+    /** Last values seen by {@link #shapeMountedSteering}, for the debug dump only — the round trip that
+     *  found this bug needed the RAW stick next to the shaped result, and the dump only had the final
+     *  merged movement vector. Written every tick, read by {@code SteamRuntimeDiagnostics}. */
+    private static volatile float mountedRawLateral, mountedRawForward,
+                                  mountedShapedLateral, mountedShapedForward;
+
+    public static float mountedRawLateral() { return mountedRawLateral; }
+    public static float mountedRawForward() { return mountedRawForward; }
+    public static float mountedShapedLateral() { return mountedShapedLateral; }
+    public static float mountedShapedForward() { return mountedShapedForward; }
+
+    // ---- Item Radial (LB/RB) dispatch — see dev.steampad.itemradial -----------------------------
+
+    /** Ticks LB/RB must stay held before HOLD_TO_OPEN opens the wheel (~300ms) — snappier than
+     *  PAUSE's 500ms long-press since this is meant for frequent, fast use. */
+    private static final int HOTBAR_RADIAL_HOLD_TICKS = 6;
+    private static int hotbarPrevHeldTicks = 0;
+    private static int hotbarNextHeldTicks = 0;
+
+    /** Bifurcates LB/RB by {@link ControllerConfig.HotbarRadialMode}: OFF keeps today's plain tap-to-
+     *  cycle dispatch untouched; ALWAYS_RADIAL opens the corresponding wheel on every press; HOLD_TO_OPEN
+     *  keeps the tap-to-cycle AND lets a hold past the threshold open the wheel instead — the user's
+     *  own choice of which of the two mechanisms this mod already uses elsewhere (hold-vs-toggle) fits
+     *  their play style. RB opens the Hotbar wheel, LB opens the Inventory/Backpack wheel — swapped
+     *  from the original LB/RB assignment per hardware feedback (D127). */
+    private static void tickHotbarRadialOrClassic(Minecraft mc, ControllerConfig cfg, long handle) {
+        switch (cfg.hotbarRadialMode) {
+            case OFF -> {
+                hotbarPrevHeldTicks = 0;
+                hotbarNextHeldTicks = 0;
+                if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_PREV)) cycleHotbar(mc, -1);
+                if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_NEXT)) cycleHotbar(mc, +1);
+            }
+            case ALWAYS_RADIAL -> {
+                if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_PREV)) {
+                    dev.steampad.itemradial.ItemRadialController.open(handle,
+                            dev.steampad.itemradial.ItemRadialController.Page.CATEGORY);
+                }
+                if (bPressed(cfg, GamepadBinds.Bind.HOTBAR_NEXT)) {
+                    dev.steampad.itemradial.ItemRadialController.open(handle,
+                            dev.steampad.itemradial.ItemRadialController.Page.HOTBAR);
+                }
+            }
+            case HOLD_TO_OPEN -> {
+                hotbarPrevHeldTicks = tickHoldToOpenBumper(mc, cfg, handle, GamepadBinds.Bind.HOTBAR_PREV,
+                        dev.steampad.itemradial.ItemRadialController.Page.CATEGORY, -1, hotbarPrevHeldTicks);
+                hotbarNextHeldTicks = tickHoldToOpenBumper(mc, cfg, handle, GamepadBinds.Bind.HOTBAR_NEXT,
+                        dev.steampad.itemradial.ItemRadialController.Page.HOTBAR, +1, hotbarNextHeldTicks);
+            }
+        }
+    }
+
+    /** Returns the updated held-tick counter. Opens the wheel the INSTANT the hold crosses the
+     *  threshold (doesn't wait for release, so it feels immediate); releasing before the threshold
+     *  fires the classic single-slot cycle instead — same tap-vs-hold shape as
+     *  {@link #tickPauseLongPress}, simplified (bHeld/bPressed already handle chord/suppression
+     *  gating, so no raw-button bypass is needed here). */
+    private static int tickHoldToOpenBumper(Minecraft mc, ControllerConfig cfg, long handle,
+                                            GamepadBinds.Bind bind, dev.steampad.itemradial.ItemRadialController.Page page,
+                                            int cycleDir, int heldTicks) {
+        if (bHeld(cfg, bind)) {
+            heldTicks++;
+            if (heldTicks == HOTBAR_RADIAL_HOLD_TICKS) {
+                dev.steampad.itemradial.ItemRadialController.open(handle, page);
+            }
+            return heldTicks;
+        }
+        if (heldTicks > 0 && heldTicks < HOTBAR_RADIAL_HOLD_TICKS) {
+            cycleHotbar(mc, cycleDir);   // released before the threshold — a plain tap
+        }
+        return 0;
+    }
+
+    private static void releaseAllMovement(Minecraft mc) {
         ControllerInputState.clear();   // stop analog movement (mixin)
         // Only release keys the PAD is holding — a blanket false would also cut a physical
         // mouse-held attack/use (the same mixed-input bug the edge-triggered writes fix).
-        if (prevAttackHeld) hold(mc.options.attackKey, false);
-        if (prevUseHeld)    hold(mc.options.useKey, false);
-        if (prevListHeld)   hold(mc.options.playerListKey, false);
+        if (prevAttackHeld) hold(mc.options.keyAttack, false);
+        if (prevUseHeld)    hold(mc.options.keyUse, false);
+        if (prevListHeld)   hold(mc.options.keyPlayerList, false);
         prevAttackHeld = prevUseHeld = prevListHeld = false;
         releaseHeldExtras();            // never leave a mod keybind stuck down
+        LongPressGate.reset();          // a hold in progress dies with the state it was for
         ZoomController.deactivate(mc);  // never leave the FOV zoomed / bobbing suppressed
     }
 
@@ -774,42 +1152,42 @@ public final class GamepadInputDispatcher {
                             + "disconnected controller: attack={} use={} playerList={} heldExtras={} zooming={}",
                     prevAttackHeld, prevUseHeld, prevListHeld, heldExtras.keySet(), ZoomController.isZooming());
         }
-        releaseAllMovement(MinecraftClient.getInstance());
+        releaseAllMovement(Minecraft.getInstance());
         prevHandle = 0L;   // force a full prev-state resync once a controller ticks again
     }
 
     // ---- GUI -------------------------------------------------------------------------------
 
     private static void onGuiOpened() {
+        LongPressGate.reset();          // the layer this hold was for is gone
         ControllerInputState.clear();   // no analog walking while a menu is open
         resetPauseHold();               // a screen appeared mid-hold — cancel the deferred pause tap
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         // Release the zoom on any screen: tickInGame stops running here, so a held zoom could never
         // see its button release — and a menu over a zoomed FOV with bobbing suppressed is confusing.
         ZoomController.deactivate(mc);
-        boolean container = mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen;
-        VirtualMouseController.onScreenOpened(mc.currentScreen, container);
+        boolean container = mc.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+        VirtualMouseController.onScreenOpened(mc.screen, container);
     }
 
     private static void onGuiClosed() {
-        releaseAllMovement(MinecraftClient.getInstance());
+        releaseAllMovement(Minecraft.getInstance());
         if (virtualLmbDown) { VirtualMouseController.releaseLeft(); virtualLmbDown = false; }
         if (virtualRmbDown) { VirtualMouseController.releaseRight(); virtualRmbDown = false; }
-        prevKbEligible = false;   // next screen with a focused field re-triggers the auto-open
     }
 
-    private static void tickGui(MinecraftClient mc, ControllerConfig cfg) {
+    private static void tickGui(Minecraft mc, ControllerConfig cfg) {
         if (captureMode) return;   // the bindings screen is capturing a button press
         if (swallowGuiTick) { swallowGuiTick = false; return; }   // capture just ended — eat this edge
-        net.minecraft.client.gui.screen.Screen screen = mc.currentScreen;
+        net.minecraft.client.gui.screens.Screen screen = mc.screen;
         if (screen == null) return;
 
-        boolean isTitleScreen = screen instanceof net.minecraft.client.gui.screen.TitleScreen;
+        boolean isTitleScreen = screen instanceof net.minecraft.client.gui.screens.TitleScreen;
 
         // Menu button (PAUSE/START) also CLOSES the pause menu — a guaranteed gamepad exit so you can
         // never get stuck in the pause menu needing the physical mouse (and "enter AND exit with the
         // menu button", as requested). Done before anything else so it always wins.
-        if (screen instanceof net.minecraft.client.gui.screen.GameMenuScreen
+        if (screen instanceof net.minecraft.client.gui.screens.PauseScreen
                 && bPressed(cfg, GamepadBinds.Bind.PAUSE)) {
             mc.setScreen(null);
             releaseAllMovement(mc);
@@ -820,12 +1198,10 @@ public final class GamepadInputDispatcher {
         // focus — that popped it up "antes de tiempo" on screens with an auto-focused search box.
         // It opens (a) automatically ONLY on pure text-entry screens (chat, signs, books), or
         // (b) when the user explicitly presses A on the focused field / clicks it with the cursor.
-        // While eligible-but-closed, the "[A] Keyboard" badge shows how to open it. B closes it.
+        // While eligible-but-closed, a badge shows how to open it (the real configured bind). B closes it.
         dev.steampad.client.keyboard.VirtualKeyboard.update(screen);
         boolean kbEligible = dev.steampad.client.keyboard.VirtualKeyboard.isEligible();
         boolean kbActive   = dev.steampad.client.keyboard.VirtualKeyboard.isActive();
-        boolean kbRising   = kbEligible && !prevKbEligible;
-        prevKbEligible = kbEligible;
 
         if (kbActive) {
             handleKeyboardInput(mc);
@@ -833,7 +1209,7 @@ public final class GamepadInputDispatcher {
             return;
         }
 
-        boolean container = screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?>;
+        boolean container = screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>;
 
         // Long-press PAUSE also works inside menus/inventories ("EN TODOS LOS LUGARES, GAMEPLAY,
         // INVENTARIO, ETC."): while held past the threshold, the show-all flag is on — the container
@@ -857,20 +1233,35 @@ public final class GamepadInputDispatcher {
         // tree (Roughly Enough Items' OverlaySearchField, confirmed by reading its source — see D063),
         // so eligibility can never auto-detect them. A dedicated, user-configurable chord (unbound by
         // default — assign it in Botones, e.g. a spare shoulder button + A) force-opens the keyboard
-        // in any inventory-like screen regardless of what SteamPad itself can detect as focused.
-        if (container && bPressed(cfg, GamepadBinds.Bind.OPEN_KEYBOARD)) {
+        // regardless of what SteamPad itself can detect as focused. NOT restricted to `container`
+        // screens (feedback: sign naming had no way to open the keyboard when auto-open didn't fire —
+        // the OPEN_KEYBOARD chord + on-screen bind hint is the documented escape hatch for exactly that
+        // case, so it must work everywhere a screen is open, not only inventory-like ones).
+        if (bPressed(cfg, GamepadBinds.Bind.OPEN_KEYBOARD)) {
             dev.steampad.client.keyboard.VirtualKeyboard.forceActivate();
             UiSoundService.playSelect();
             return;
         }
 
         // Auto-open only where typing is the screen's whole purpose (and only if the user wants it).
-        if (kbRising && ConfigManager.getGlobal().virtualKeyboardAutoShow
-                && dev.steampad.client.keyboard.VirtualKeyboard.isTextEntryScreen(screen)) {
+        // autoOpenWanted() is level-triggered — see its doc for why the old `kbRising` edge could be
+        // missed entirely (the sign editor never opening the keyboard). Closing with B still sticks.
+        if (ConfigManager.getGlobal().virtualKeyboardAutoShow
+                && dev.steampad.client.keyboard.VirtualKeyboard.autoOpenWanted(screen)) {
             dev.steampad.client.keyboard.VirtualKeyboard.activate();
             UiSoundService.playNavigate();
             return;
         }
+
+        // CONTEXTUAL (per-layer) button bindings — the MENU / INVENTORY layers. Runs before every
+        // built-in GUI action so a button the user claimed for this context is genuinely theirs here,
+        // and returns for one tick when one fires so the same edge cannot also drive navigation.
+        //
+        // Deliberately placed AFTER the virtual keyboard and OPEN_KEYBOARD above: while the keyboard
+        // owns the screen every button is a key, and the force-open chord is the documented escape
+        // hatch for mod search boxes — neither may be shadowed by a user binding. Wheels never reach
+        // here at all (they are handled in tickInGame and own the pad while open).
+        if (dispatchExtraBinds(mc, cfg)) return;
 
         // Select (BACK) cycles the virtual cursor mode: OFF → ON → AUTO. Deferred to the Splitscreen
         // chord's release-signal (see backTapPressed()) so holding Select to cycle window layouts via
@@ -906,7 +1297,7 @@ public final class GamepadInputDispatcher {
             ndy = (pressed(GamepadSnapshot.DPAD_DOWN) ? 1 : 0) - (pressed(GamepadSnapshot.DPAD_UP) ? 1 : 0);
         }
         if (ndx != 0 || ndy != 0) {
-            if (container && screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> hsNav) {
+            if (container && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> hsNav) {
                 VirtualMouseController.onStickUsed();   // keep/ensure the cursor visible in inventories
                 SlotSnap.moveToNeighbor(hsNav, ndx, ndy);
                 UiSoundService.playNavigate();
@@ -928,7 +1319,7 @@ public final class GamepadInputDispatcher {
         // opcion al mouse virtual... que pueda prenderse o desactivarse").
         if (VirtualMouseController.isShown() && !moving
                 && ConfigManager.getGlobal().virtualMouseSnapEnabled) {
-            if (screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> hs) {
+            if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> hs) {
                 SlotSnap.apply(hs);
             } else {
                 WidgetSnap.apply(screen);
@@ -937,19 +1328,23 @@ public final class GamepadInputDispatcher {
 
         // Right stick: when a slider is focused, X fine-adjusts its value (soft = millimetric, hard =
         // fast); otherwise Y scrolls the list. Scroll never changes option values (sliders ignore the
-        // wheel, and the list owns the scroll).
+        // wheel, and the list owns the scroll). AbstractSliderButton, not SteamSlider: reaches vanilla's
+        // own sliders (volume, FOV, any other options-screen slider) and any other mod's the same way,
+        // not just this mod's own (reported: "los sliders vanilla no se mueven con el stick derecho
+        // como los sliders del mod" — see AbstractSliderButtonAccessor's doc for the mechanism).
         float[] rs = DeadzoneProcessor.process(
                 new float[]{cur.axis(GamepadSnapshot.AXIS_RIGHT_X), cur.axis(GamepadSnapshot.AXIS_RIGHT_Y)}, 0.2f);
-        net.minecraft.client.gui.Element focused = screen.getFocused();
-        if (focused instanceof dev.steampad.client.ui.SteamSlider slider && Math.abs(rs[0]) > 0.001f) {
+        net.minecraft.client.gui.components.events.GuiEventListener focused = screen.getFocused();
+        boolean sliderFocused = focused instanceof net.minecraft.client.gui.components.AbstractSliderButton;
+        if (sliderFocused && Math.abs(rs[0]) > 0.001f) {
             // Squared magnitude → very fine at small deflection, fast at full (max ~3% of range/tick).
             double step = Math.signum(rs[0]) * (rs[0] * rs[0]) * 0.03;
-            slider.nudge(step);
+            nudgeSlider((net.minecraft.client.gui.components.AbstractSliderButton) focused, step);
         }
         if (rs[1] != 0f) {
             if (screen instanceof dev.steampad.screen.SteamPadBaseScreen base && base.hasScroll()) {
                 base.scrollBy((int) (rs[1] * 16));
-            } else if (!(focused instanceof dev.steampad.client.ui.SteamSlider)) {
+            } else if (!sliderFocused) {
                 VirtualMouseController.simulateScroll(-rs[1] * 1.2);
             }
         }
@@ -968,9 +1363,14 @@ public final class GamepadInputDispatcher {
                     // The click itself may CLOSE/replace the screen (e.g. saving a keybind in the
                     // picker) — re-read currentScreen and only proceed if it's still the same one
                     // (this was a hard crash: NPE on the now-null screen).
-                    if (kbEligible && mc.currentScreen == screen
-                            && dev.steampad.client.keyboard.VirtualKeyboard.pointInFocusedTextField(
-                                    screen, VirtualMouseController.getX(), VirtualMouseController.getY())) {
+                    // On a sign/book editor there is no text widget to click, so the position test can
+                    // never pass — A would do nothing at all with the cursor visible. Those screens
+                    // open the keyboard on any A press instead (isFieldlessTextEntry excludes chat,
+                    // whose real input widget keeps the existing click-to-open behaviour untouched).
+                    if (kbEligible && mc.screen == screen
+                            && (dev.steampad.client.keyboard.VirtualKeyboard.pointInFocusedTextField(
+                                    screen, VirtualMouseController.getX(), VirtualMouseController.getY())
+                                || dev.steampad.client.keyboard.VirtualKeyboard.isFieldlessTextEntry(screen))) {
                         dev.steampad.client.keyboard.VirtualKeyboard.activate();
                         UiSoundService.playSelect();
                     }
@@ -1001,18 +1401,18 @@ public final class GamepadInputDispatcher {
             if (!isTitleScreen && pressed(GamepadSnapshot.X)) VirtualMouseController.simulateRightClick();
         }
         // Y = quick-move (shift-click) the slot under the cursor inside a container.
-        if (pressed(GamepadSnapshot.Y) && screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> hsq) {
+        if (pressed(GamepadSnapshot.Y) && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> hsq) {
             quickMove(mc, hsq);
         }
         // B = back/close. On TitleScreen B → Quit (handled above), not close().
-        if (!isTitleScreen && pressed(GamepadSnapshot.B)) screen.close();
+        if (!isTitleScreen && pressed(GamepadSnapshot.B)) screen.onClose();
     }
 
     /**
      * Drives the on-screen keyboard while it is active. All input is fully consumed here — nothing
      * leaks to the underlying screen/gameplay. Shortcuts are intentionally scoped to this block.
      */
-    private static void handleKeyboardInput(MinecraftClient mc) {
+    private static void handleKeyboardInput(Minecraft mc) {
         // B closes the keyboard only — the underlying screen stays open.
         if (pressed(GamepadSnapshot.B)) {
             dev.steampad.client.keyboard.VirtualKeyboard.deactivate();
@@ -1050,11 +1450,21 @@ public final class GamepadInputDispatcher {
         if (pressed(GamepadSnapshot.A)) dev.steampad.client.keyboard.VirtualKeyboard.pressSelected();
         if (pressed(GamepadSnapshot.Y)) dev.steampad.client.keyboard.VirtualKeyboard.space();
         if (pressed(GamepadSnapshot.X)) dev.steampad.client.keyboard.VirtualKeyboard.backspace();
+        // R3 = TAB while the chat is open, so a half-typed command completes without a keyboard
+        // (feedback: "cuando estoy escribiendo en el chat un comando que el click del stick derecho
+        // sea el TAB"). Outside chat it keeps its existing meaning, so nothing else changes: caret →
+        // in dual mode, unused in classic mode exactly as before.
+        boolean chatKb = dev.steampad.client.keyboard.VirtualKeyboard.isChatScreen();
+        if (chatKb && pressed(GamepadSnapshot.RIGHT_THUMB)) {
+            dev.steampad.client.keyboard.VirtualKeyboard.tabComplete();
+        }
         if (dualKb) {
             if (pressed(GamepadSnapshot.LEFT_BUMPER))  dev.steampad.client.keyboard.VirtualKeyboard.pressLeftPointer();
             if (pressed(GamepadSnapshot.RIGHT_BUMPER)) dev.steampad.client.keyboard.VirtualKeyboard.pressRightPointer();
             if (pressed(GamepadSnapshot.LEFT_THUMB))   dev.steampad.client.keyboard.VirtualKeyboard.caretLeft();
-            if (pressed(GamepadSnapshot.RIGHT_THUMB))  dev.steampad.client.keyboard.VirtualKeyboard.caretRight();
+            if (!chatKb && pressed(GamepadSnapshot.RIGHT_THUMB)) {
+                dev.steampad.client.keyboard.VirtualKeyboard.caretRight();
+            }
         } else {
             if (pressed(GamepadSnapshot.LEFT_BUMPER))  dev.steampad.client.keyboard.VirtualKeyboard.caretLeft();
             if (pressed(GamepadSnapshot.RIGHT_BUMPER)) dev.steampad.client.keyboard.VirtualKeyboard.caretRight();
@@ -1081,13 +1491,13 @@ public final class GamepadInputDispatcher {
      * Title-screen two-press shortcut: first press focuses the button, second press activates it.
      * Buttons are matched by their translation key ("menu.options", "menu.quit", etc.).
      */
-    private static void handleTitleButton(net.minecraft.client.gui.screen.Screen screen, String transKey) {
+    private static void handleTitleButton(net.minecraft.client.gui.screens.Screen screen, String transKey) {
         for (var element : screen.children()) {
-            if (!(element instanceof net.minecraft.client.gui.widget.ButtonWidget btn)) continue;
-            if (!(btn.getMessage().getContent() instanceof net.minecraft.text.TranslatableTextContent tc)) continue;
+            if (!(element instanceof net.minecraft.client.gui.components.Button btn)) continue;
+            if (!(btn.getMessage().getContents() instanceof net.minecraft.network.chat.contents.TranslatableContents tc)) continue;
             if (!transKey.equals(tc.getKey())) continue;
             if (screen.getFocused() == btn) {
-                btn.onPress(new net.minecraft.client.input.MouseInput(0, 0));
+                dev.steampad.compat.mc.InputEventCompat.pressButton(btn);
                 UiSoundService.playSelect();
             } else {
                 screen.setFocused(btn);
@@ -1097,21 +1507,39 @@ public final class GamepadInputDispatcher {
         }
     }
 
-    private static void focusMoveDir(net.minecraft.client.gui.screen.Screen s, int dx, int dy) {
+    private static void focusMoveDir(net.minecraft.client.gui.screens.Screen s, int dx, int dy) {
         if (s instanceof dev.steampad.screen.SteamPadBaseScreen base) base.focusMoveDir(dx, dy);
         else GuiFocusNavigator.moveDir(s, dx, dy);
     }
 
-    /** Shift-click (quick-move) the slot under the cursor via the interaction manager. */
-    private static void quickMove(MinecraftClient mc, net.minecraft.client.gui.screen.ingame.HandledScreen<?> hs) {
-        if (mc.interactionManager == null || mc.player == null) return;
-        net.minecraft.screen.slot.Slot slot = SlotSnap.nearestSlotUnbounded(hs);
-        if (slot == null) return;
-        mc.interactionManager.clickSlot(hs.getScreenHandler().syncId, slot.id, 0,
-                net.minecraft.screen.slot.SlotActionType.QUICK_MOVE, mc.player);
+    /**
+     * Fine-adjusts ANY {@code AbstractSliderButton} by a fraction of its normalized 0..1 range — the
+     * generalized version of {@code SteamSlider.nudge}, reachable for vanilla's own sliders and any
+     * other mod's via {@link dev.steampad.mixin.AbstractSliderButtonAccessor} instead of requiring
+     * this mod's own subclass. Mirrors {@code SteamSlider.nudge}'s exact sequence (clamp, skip the
+     * commit when unchanged, update message, commit) so a vanilla slider updates identically to how it
+     * would if the mouse had dragged it.
+     */
+    private static void nudgeSlider(net.minecraft.client.gui.components.AbstractSliderButton slider, double deltaNormalized) {
+        var accessor = (dev.steampad.mixin.AbstractSliderButtonAccessor) slider;
+        double current = accessor.steampad$getValue();
+        double next = net.minecraft.util.Mth.clamp(current + deltaNormalized, 0.0, 1.0);
+        if (next == current) return;
+        accessor.steampad$setValue(next);
+        accessor.steampad$updateMessage();
+        accessor.steampad$applyValue();
     }
 
-    private static boolean focusActivate(net.minecraft.client.gui.screen.Screen s) {
+    /** Shift-click (quick-move) the slot under the cursor via the interaction manager. */
+    private static void quickMove(Minecraft mc, net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> hs) {
+        if (mc.gameMode == null || mc.player == null) return;
+        net.minecraft.world.inventory.Slot slot = SlotSnap.nearestSlotUnbounded(hs);
+        if (slot == null) return;
+        mc.gameMode.handleInventoryMouseClick(hs.getMenu().containerId, slot.index, 0,
+                net.minecraft.world.inventory.ClickType.QUICK_MOVE, mc.player);
+    }
+
+    private static boolean focusActivate(net.minecraft.client.gui.screens.Screen s) {
         if (s instanceof dev.steampad.screen.SteamPadBaseScreen base) return base.focusActivate();
         return GuiFocusNavigator.activate(s);
     }
@@ -1144,15 +1572,15 @@ public final class GamepadInputDispatcher {
         return cur.button(i) && !prevButtons[i];
     }
 
-    private static void hold(KeyBinding key, boolean down) {
+    private static void hold(KeyMapping key, boolean down) {
         if (key == null) return;
-        InputUtil.Key k = InputUtil.fromTranslationKey(key.getBoundKeyTranslationKey());
-        KeyBinding.setKeyPressed(k, down);
+        InputConstants.Key k = InputConstants.getKey(key.saveString());
+        KeyMapping.set(k, down);
     }
 
-    private static void tap(KeyBinding key) {
+    private static void tap(KeyMapping key) {
         if (key == null) return;
-        InputUtil.Key k = InputUtil.fromTranslationKey(key.getBoundKeyTranslationKey());
-        KeyBinding.onKeyPressed(k);
+        InputConstants.Key k = InputConstants.getKey(key.saveString());
+        KeyMapping.click(k);
     }
 }

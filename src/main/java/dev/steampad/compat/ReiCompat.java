@@ -2,16 +2,15 @@ package dev.steampad.compat;
 
 import dev.steampad.input.ExternalWidgetScanner;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.gui.Element;
-import net.minecraft.client.gui.ParentElement;
-import net.minecraft.client.gui.screen.Screen;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import net.minecraft.client.gui.components.events.ContainerEventHandler;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.Screen;
 
 /**
  * Soft (reflection-only, zero hard dependency) bridge to Roughly Enough Items' overlay, so its
@@ -26,7 +25,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@code REIRuntime.getInstance()} → {@code isOverlayVisible()} → {@code getOverlay()}
  *       ({@code Optional<ScreenOverlay>});</li>
- *   <li>the overlay and every REI widget implement vanilla's {@link ParentElement}, so its tree is
+ *   <li>the overlay and every REI widget implement vanilla's {@link ContainerEventHandler}, so its tree is
  *       walkable with plain {@code children()};</li>
  *   <li>REI widgets expose {@code getBounds()} returning {@code me.shedaniel.math.Rectangle} with
  *       public int {@code x/y/width/height} — absolute screen coordinates.</li>
@@ -57,7 +56,7 @@ public final class ReiCompat {
     /** REI overlay widgets as snap/nav targets, or an empty list (REI absent, overlay hidden, any
      *  failure). Called from {@link ExternalWidgetScanner#discover} — already memoized there. */
     public static List<ExternalWidgetScanner.Target> discover(Screen screen) {
-        if (!(screen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?>)) return List.of();
+        if (!(screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>)) return List.of();
         if (Boolean.FALSE.equals(available)) return List.of();
         try {
             if (available == null && !probe()) return List.of();
@@ -102,7 +101,7 @@ public final class ReiCompat {
         if (node == null || depth > MAX_DEPTH || out.size() >= MAX_TARGETS || !seen.add(node)) return;
 
         double[] r = boundsOf(node);
-        boolean isLeafLike = !(node instanceof ParentElement);
+        boolean isLeafLike = !(node instanceof ContainerEventHandler);
         if (r != null && r[2] > 0 && r[3] > 0 && r[2] <= sw && r[3] <= sh
                 && r[0] > -r[2] && r[1] > -r[3] && r[0] < sw && r[1] < sh) {
             // Containers (the overlay itself, the entry grid) are walked, not targeted — snapping to
@@ -111,14 +110,14 @@ public final class ReiCompat {
                 out.add(new ExternalWidgetScanner.Target(r[0], r[1], r[2], r[3], null));
             }
         }
-        if (node instanceof ParentElement pe) {
-            List<? extends Element> children;
+        if (node instanceof ContainerEventHandler pe) {
+            List<? extends GuiEventListener> children;
             try {
                 children = pe.children();
             } catch (Throwable t) {
                 return;
             }
-            for (Element child : children) collect(child, out, seen, depth + 1, sw, sh);
+            for (GuiEventListener child : children) collect(child, out, seen, depth + 1, sw, sh);
         }
     }
 

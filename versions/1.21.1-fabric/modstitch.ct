@@ -1,0 +1,32 @@
+accessWidener v1 named
+
+# Per-variant override of the repo-root modstitch.ct. ModStitch resolves this file from the variant's
+# own project directory first, so this REPLACES the root file for 1.21.1 — it does not merge with it.
+# Every entry the variant needs must therefore be listed here, including the ones identical to root.
+#
+# Why an override instead of conditionals in the root file: ModStitch parses modstitch.ct itself at
+# configuration time, before Stonecutter runs, and its parser rejects Stonecutter's `//?` comments
+# outright. Verified by trying it — see PORT_MULTIVERSION.md S3.3 category A.
+#
+# 1.21.9 reworked the whole input layer into records instead of loose parameters, so the synthetic
+# input entries differ here. Shapes verified with javap against the real remapped 1.21.1 jar:
+#
+#   MouseHandler.onPress(long,int,int,int)          PRIVATE -> widened below
+#   MouseHandler.onMove(long,double,double)         PRIVATE -> widened below (same as root)
+#   KeyboardHandler.keyPress(long,int,int,int,int)  PUBLIC  -> deliberately NOT listed, no need
+#   KeyboardHandler.charTyped(long,int,int)         PRIVATE -> widened below
+
+# Synthetic clicks route through the REAL button callback rather than calling Screen.mouseClicked
+# directly, so Architectury-based mods (REI and others) actually see them — see the root file's note
+# for the full reasoning. On 1.21.1 that callback is named onPress and takes loose ints.
+accessible method net/minecraft/client/MouseHandler onPress (JIII)V
+# Lets VirtualMouseController move the virtual cursor.
+accessible method net/minecraft/client/MouseHandler onMove (JDD)V
+# Same real-pipeline routing for typing. keyPress needs no entry on 1.21.1 — it is already public.
+accessible method net/minecraft/client/KeyboardHandler charTyped (JII)V
+# Boss detection for haptics: entity UUID present as a boss-bar key.
+accessible field net/minecraft/client/gui/components/BossHealthOverlay events Ljava/util/Map;
+# AbstractSelectionList$Entry is protected in the InnerClasses attribute — widen so
+# AbstractSelectionListInvoker can name it and call vanilla's own scroll-into-view (ensureVisible on
+# this version). Same class name as root; only the method name differs, handled in the invoker.
+accessible class net/minecraft/client/gui/components/AbstractSelectionList$Entry

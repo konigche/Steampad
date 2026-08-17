@@ -1,17 +1,15 @@
 package dev.steampad.radial.icon;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.steampad.emote.EmoteData;
 import dev.steampad.emote.EmoteLibrary;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
-
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * Renders an emote's own icon in a radial slot — a real image (the "AAA" per-emote artwork the
@@ -28,16 +26,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class EmoteIconProvider {
 
     private static final int SIZE = 16;
-    private static final Map<String, Identifier> TEXTURES = new ConcurrentHashMap<>();
+    private static final Map<String, ResourceLocation> TEXTURES = new ConcurrentHashMap<>();
     private static final Map<String, NativeImage> IMAGES = new ConcurrentHashMap<>();
     private static final java.util.Set<String> FAILED = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private EmoteIconProvider() {}
 
-    public static void render(DrawContext ctx, String emoteId, int x, int y) {
+    public static void render(GuiGraphics ctx, String emoteId, int x, int y) {
         if (emoteId == null || emoteId.isEmpty()) return;
         EmoteData data = EmoteLibrary.byId(emoteId);
-        Identifier tex = data != null ? textureFor(emoteId, data) : null;
+        ResourceLocation tex = data != null ? textureFor(emoteId, data) : null;
         if (tex != null) {
             NativeImage img = IMAGES.get(emoteId);
             int iw = img != null ? img.getWidth() : SIZE;
@@ -48,7 +46,7 @@ public final class EmoteIconProvider {
             // this 12-region-explicit form is the one already proven working elsewhere in the mod.
             // regionWidth/regionHeight = the FULL source image (no sub-region sampling — the icon PNG
             // IS the whole texture, not an atlas cell).
-            ctx.drawTexture(RenderPipelines.GUI_TEXTURED, tex, x, y, 0f, 0f, SIZE, SIZE, iw, ih, iw, ih);
+            dev.steampad.compat.mc.RenderCompat.blitTexture(ctx, tex, x, y, SIZE, SIZE, iw, ih);
             return;
         }
         String letter = data != null && !data.name.isEmpty()
@@ -56,15 +54,22 @@ public final class EmoteIconProvider {
         CharacterIconProvider.render(ctx, letter, x, y);
     }
 
-    private static Identifier textureFor(String emoteId, EmoteData data) {
+    private static ResourceLocation textureFor(String emoteId, EmoteData data) {
         if (data.iconPng == null || FAILED.contains(emoteId)) return null;
         return TEXTURES.computeIfAbsent(emoteId, id -> {
             try {
                 NativeImage image = NativeImage.read(data.iconPng);
-                NativeImageBackedTexture texture =
-                        new NativeImageBackedTexture(() -> "steampad_emote_icon_" + id, image);
-                Identifier textureId = Identifier.of("steampad", "emote_icon/" + sanitize(id));
-                MinecraftClient.getInstance().getTextureManager().registerTexture(textureId, texture);
+                // DynamicTexture gained a debug-label supplier as its first argument in 1.21.6 (the
+                // Blaze3D rewrite labels GPU resources); before that it only takes the image. The
+                // label is diagnostic only, so both branches produce the same texture.
+                //? if >=1.21.6 {
+                DynamicTexture texture =
+                        new DynamicTexture(() -> "steampad_emote_icon_" + id, image);
+                //?} else {
+                /*DynamicTexture texture = new DynamicTexture(image);*/
+                //?}
+                ResourceLocation textureId = ResourceLocation.fromNamespaceAndPath("steampad", "emote_icon/" + sanitize(id));
+                Minecraft.getInstance().getTextureManager().register(textureId, texture);
                 IMAGES.put(id, image);
                 return textureId;
             } catch (Exception e) {

@@ -3,11 +3,11 @@ package dev.steampad.mixin;
 import dev.steampad.emote.EmoteAnimator;
 import dev.steampad.input.JuiceController;
 import dev.steampad.input.ThirdPersonCameraController;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.Camera;
-import net.minecraft.entity.Entity;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.BlockView;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -33,7 +33,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p><b>Free-look was a HEAD-cancel until v0.56.0 (D093), fixed after real-hardware testing showed
  * free-look camera looking "like first person, orbiting an invisible player":</b> {@code update()}'s
  * very first instructions (verified via javap) are {@code this.ready = true}, then
- * {@code this.thirdPerson = <the boolean parameter>} — the exact field {@link Camera#isThirdPerson()}
+ * {@code this.thirdPerson = <the boolean parameter>} — the exact field {@link Camera#isDetached()}
  * reads, which vanilla's own entity-render code checks to decide whether to draw the camera's own
  * focused entity (skipped in first person — you can't see inside your own head). Cancelling at HEAD
  * means that assignment never runs, so {@code thirdPerson} stays frozen at whatever it last was
@@ -49,8 +49,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Camera.class)
 public abstract class ThirdPersonCameraMixin {
 
-    @Shadow protected abstract void setPos(Vec3d pos);
-    @Shadow public abstract Vec3d getPos();
+    @Shadow protected abstract void setPosition(Vec3 pos);
+    @Shadow public abstract Vec3 getPosition();
     @Shadow protected abstract void setRotation(float yaw, float pitch);
 
     /**
@@ -62,42 +62,59 @@ public abstract class ThirdPersonCameraMixin {
      * overwrites position only. {@code setRotation} itself recomputes the rotation quaternion and all
      * three frustum planes from the yaw/pitch given to it (verified via javap), so this fully replaces
      * vanilla's rotation state too — nothing about the free camera's own pose is left stale.
+     *
+     * <p><b>{@code inverseView} (front-view / mirror mode) still runs through this hook (D123).</b>
+     * Third iteration of this decision: D120 bailed on {@code inverseView} → vanilla's hard-locked
+     * front camera, reported as "bloqueada/laggy"; D121 removed the bail AND made the pose identical
+     * to back-view → mirror mode "desapareció" (a free orbit doesn't inherently face you). Now the
+     * pose still comes from the free pipeline (same smoothing/offset/wall-clamp — the no-lag half),
+     * but {@code computeFreePoseInner}'s own mirror block drives yaw/pitch toward the player's front
+     * instead of the stick (the "siempre viendo de frente" half) — so this hook stays a dumb
+     * apply-the-pose site with zero perspective-specific logic of its own.
      */
-    @Inject(method = "update(Lnet/minecraft/world/BlockView;Lnet/minecraft/entity/Entity;ZZF)V",
+    @Inject(method = "setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V",
             at = @At("TAIL"))
-    private void steampad$applyFreeLook(BlockView area, Entity focusedEntity, boolean thirdPerson,
+    private void steampad$applyFreeLook(BlockGetter area, Entity focusedEntity, boolean thirdPerson,
                                         boolean inverseView, float tickDelta, CallbackInfo ci) {
         if (!ThirdPersonCameraController.isFreeLookEnabled()) return;
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null || focusedEntity != mc.player || inverseView) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || focusedEntity != mc.player) return;
 
         Camera self = (Camera) (Object) this;
-        var pose = ThirdPersonCameraController.computeFreePose(mc, self);
+        // tickDelta is vanilla's own render-interpolation factor for THIS frame — forwarded so the
+        // free camera can read its tick-rate follow state interpolated instead of stair-stepped.
+        // Passing it is what makes walking smooth; see ThirdPersonCameraController.clientTick.
+        var pose = ThirdPersonCameraController.computeFreePose(mc, self, tickDelta);
         if (pose == null) return;   // e.g. first person — let vanilla's own result stand
 
-        this.setPos(pose.pos());
+        // D123: the enter/exit "camera leaves/re-enters the body" ease applies on top of the FREE
+        // pose too. It used to live only in the plain-offset hook below — which bails whenever
+        // free-look is on, and a REAL emote FORCES free-look on (D100), so the ease built FOR emotes
+        // had been unreachable during emotes. See PerspectiveTransition's class doc.
+        Vec3 eased = dev.steampad.input.PerspectiveTransition.blend(mc, pose.pos(), tickDelta);
+        this.setPosition(eased != null ? eased : pose.pos());
         this.setRotation(pose.yaw(), pose.pitch());
     }
 
-    @Inject(method = "update(Lnet/minecraft/world/BlockView;Lnet/minecraft/entity/Entity;ZZF)V",
+    @Inject(method = "setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V",
             at = @At("TAIL"))
-    private void steampad$applyOffset(BlockView area, Entity focusedEntity, boolean thirdPerson,
+    private void steampad$applyOffset(BlockGetter area, Entity focusedEntity, boolean thirdPerson,
                                       boolean inverseView, float tickDelta, CallbackInfo ci) {
         if (ThirdPersonCameraController.isFreeLookEnabled()) return;   // handled at HEAD instead
 
         Camera self = (Camera) (Object) this;
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
 
-        Vec3d pos = this.getPos();
-        Vec3d transitionPos = EmoteAnimator.computeCameraOverride(mc, pos);
+        Vec3 pos = this.getPosition();
+        Vec3 transitionPos = dev.steampad.input.PerspectiveTransition.blend(mc, pos, tickDelta);
         if (transitionPos != null) {
-            this.setPos(transitionPos);
+            this.setPosition(transitionPos);
             pos = transitionPos;
         }
 
-        Vec3d offset = ThirdPersonCameraController.computeOffset(mc, self, focusedEntity);
+        Vec3 offset = ThirdPersonCameraController.computeOffset(mc, self, focusedEntity);
         if (offset.x != 0 || offset.y != 0 || offset.z != 0) {
-            this.setPos(pos.add(offset));
+            this.setPosition(pos.add(offset));
         }
     }
 
@@ -106,13 +123,13 @@ public abstract class ThirdPersonCameraMixin {
      * the hooks above already settled on. {@link JuiceController#cameraOffset()} is {@code Vec3d.ZERO}
      * whenever nothing is shaking, so this is a single cheap check the rest of the time.
      */
-    @Inject(method = "update(Lnet/minecraft/world/BlockView;Lnet/minecraft/entity/Entity;ZZF)V",
+    @Inject(method = "setup(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;ZZF)V",
             at = @At("TAIL"))
-    private void steampad$applyScreenShake(BlockView area, Entity focusedEntity, boolean thirdPerson,
+    private void steampad$applyScreenShake(BlockGetter area, Entity focusedEntity, boolean thirdPerson,
                                            boolean inverseView, float tickDelta, CallbackInfo ci) {
-        Vec3d shake = JuiceController.cameraOffset();
+        Vec3 shake = JuiceController.cameraOffset();
         if (shake.x != 0 || shake.y != 0 || shake.z != 0) {
-            this.setPos(this.getPos().add(shake));
+            this.setPosition(this.getPosition().add(shake));
         }
     }
 }

@@ -4,11 +4,11 @@ import dev.steampad.config.ConfigManager;
 import dev.steampad.config.GlobalConfig;
 import dev.steampad.service.ClipboardDebugService;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Global SteamPad settings — two-column layout (option list + right description panel) matching the
@@ -20,7 +20,7 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
     private GlobalConfig cfg;
 
     public GlobalSettingsScreen(Screen parent) {
-        super(Text.translatable("steampad.screen.global_settings.title"));
+        super(Component.translatable("steampad.screen.global_settings.title"));
         this.parent = parent;
     }
 
@@ -39,7 +39,7 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
         // backends de entrada") — the slot LAYERS moved to Botones' Steam Input section, next to the
         // slots themselves; this screen keeps the attach mode.
         section("steampad.settings.section.steam_input");
-        button("steampad.settings.steam_input_config", () -> client.setScreen(new SteamInputSettingsScreen(this)));
+        button("steampad.settings.steam_input_config", () -> minecraft.setScreen(new SteamInputSettingsScreen(this)));
 
         section("steampad.settings.section.server");
         cycling("steampad.settings.block_reach_around", GlobalConfig.BlockReachAround.values(),
@@ -56,9 +56,18 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
                 v -> { cfg.notifyLowBattery = v; save(); });
         toggle("steampad.settings.out_of_focus_input", cfg.outOfFocusInput,
                 v -> { cfg.outOfFocusInput = v; save(); });
+        // Manual replay (feedback: "podemos poner un boton para que salga de forma manual ademas de la
+        // primera vez"): the automatic popup is shown ONCE EVER (SteamPadClient, gated on
+        // GlobalConfig.hasSeenOnboarding — already true for any long-running save, which is exactly why
+        // it "stopped firing"), so this is the only way back to it afterwards. Doesn't touch
+        // hasSeenOnboarding either way — reopening the tour manually shouldn't reset or re-arm anything.
+        button("steampad.settings.replay_onboarding", () -> {
+            long active = dev.steampad.service.ActiveControllerService.getActiveHandle();
+            minecraft.setScreen(new OnboardingScreen(this, active));
+        });
 
         section("steampad.settings.section.keyboard");
-        button("steampad.settings.keyboard_config", () -> client.setScreen(new KeyboardSettingsScreen(this)));
+        button("steampad.settings.keyboard_config", () -> minecraft.setScreen(new KeyboardSettingsScreen(this)));
 
         section("steampad.settings.section.hud");
         cycling("steampad.cset.ingame_guide_detail", GlobalConfig.ButtonGuideDetail.values(),
@@ -88,10 +97,26 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
         // "no me fije donde esta" for this specific one, since nothing here points at it. A direct
         // shortcut from the feature's own section is cheap and doesn't require restructuring Botones.
         button("steampad.settings.third_person_assign_bind",
-                () -> client.setScreen(new BindingsScreen(this,
+                () -> minecraft.setScreen(new BindingsScreen(this,
                         dev.steampad.service.ActiveControllerService.getActiveHandle())));
+        toggle("steampad.settings.third_person_auto_switch_mount", cfg.thirdPersonAutoSwitchOnMount,
+                v -> { cfg.thirdPersonAutoSwitchOnMount = v; save(); });
+        // Sits in this section because that is where a player looks for "third person happens
+        // automatically when X" — even though it drives ANOTHER mod's option, not SteamPad's camera.
+        // Shown unconditionally (the row is a no-op without Gliders, and hiding it would need a
+        // classload probe just to draw a screen).
+        toggle("steampad.settings.gliders_force_perspective", cfg.glidersForcePerspective,
+                v -> { cfg.glidersForcePerspective = v; save(); });
+        slider("steampad.settings.third_person_mounted_pitch", cfg.thirdPersonMountedCameraPitch, 0f, 50f, "%.0f°",
+                v -> { cfg.thirdPersonMountedCameraPitch = v; save(); });
+        slider("steampad.settings.third_person_mounted_distance", cfg.thirdPersonMountedCameraDistance * 100f,
+                150f, 800f, "%.0f cm",
+                v -> { cfg.thirdPersonMountedCameraDistance = v / 100f; save(); });
 
-        section("steampad.settings.section.third_person_free_look");
+        // D124: the free-look rows live in the SAME "Cámara en tercera persona" section now (round-4
+        // feedback: "todos estos ajustes deben corresponder solo a Camara en tercera persona") — the
+        // separate "Cámara libre en tercera persona" header is gone, and the master toggle above
+        // gates every row below it (see ThirdPersonCameraController.isFreeLookEnabled).
         toggle("steampad.settings.third_person_free_look_enabled", cfg.thirdPersonFreeLookEnabled,
                 v -> { cfg.thirdPersonFreeLookEnabled = v; save(); });
         cycling("steampad.settings.third_person_rotate_mode", GlobalConfig.ThirdPersonRotateMode.values(),
@@ -118,19 +143,19 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
         toggle("steampad.settings.enhanced_deck_driver", cfg.useEnhancedSteamDeckDriver,
                 v -> { cfg.useEnhancedSteamDeckDriver = v; save(); });
         button("steampad.settings.manage_profiles",
-                () -> client.setScreen(new ProfilesScreen(this,
+                () -> minecraft.setScreen(new ProfilesScreen(this,
                         dev.steampad.service.ActiveControllerService.getActiveHandle())));
         button("steampad.settings.copy_debug", ClipboardDebugService::copyToClipboard);
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     private void addCurrentServerToWhitelist() {
-        if (client != null && client.getCurrentServerEntry() != null) {
-            String addr = client.getCurrentServerEntry().address;
+        if (minecraft != null && minecraft.getCurrentServer() != null) {
+            String addr = minecraft.getCurrentServer().ip;
             if (!cfg.keyboardMovementWhitelist.contains(addr)) {
                 cfg.keyboardMovementWhitelist.add(addr);
                 save();
@@ -142,12 +167,12 @@ public class GlobalSettingsScreen extends ColumnSettingsScreen {
     private void save() { ConfigManager.saveGlobal(); }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

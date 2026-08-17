@@ -42,4 +42,32 @@ public final class DeadzoneProcessor {
     public static float applySensitivity(float value, float sensitivity) {
         return MathUtil.clamp(value * sensitivity, -1f, 1f);
     }
+
+    /**
+     * <b>Axial</b> (single-axis) deadzone, sign-preserving and linearly rescaled above the threshold —
+     * the exact same shape as {@link #process}'s circular one, applied to one axis instead of to the
+     * vector's length. Used for vehicle steering (see
+     * {@code GamepadInputDispatcher.shapeMountedSteering}).
+     *
+     * <p><b>Why a circular deadzone cannot do this job.</b> {@link #process} zeroes the stick near its
+     * CENTRE and, above that, preserves the vector's ANGLE exactly while rescaling only its length. So
+     * there is no dead band around the forward AXIS: a thumb resting a few degrees off-axis while
+     * pushing fully forward hands through its whole lateral component, at any magnitude. A keyboard
+     * cannot produce that state at all — its lateral impulse is only ever exactly -1, 0 or +1, which is
+     * why holding W drives dead straight — but an analog stick essentially never reads exactly zero,
+     * and a vehicle that turns proportionally to that value integrates any residue into a permanent
+     * curve ("nunca va solo adelante"). Attenuating is not enough; inside the band it has to be
+     * EXACTLY zero.
+     *
+     * <p>Above the band the response stays linear and continuous (0 at the edge of the band, full 1.0
+     * at full deflection), so steering authority is untouched — the stick keeps its analog character,
+     * it just gains a real "straight ahead" the way the keyboard has one.
+     *
+     * <p>{@code deadzone <= 0} returns {@code v} unchanged (feature off).
+     */
+    public static float applyAxialDeadzone(float v, float deadzone) {
+        if (deadzone <= 0f) return v;
+        float shaped = MathUtil.applyCircularDeadzone(Math.abs(v), deadzone);
+        return v < 0f ? -shaped : shaped;
+    }
 }

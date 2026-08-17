@@ -1,27 +1,29 @@
 package dev.steampad.client.keyboard;
 
 import dev.steampad.config.ConfigManager;
+import dev.steampad.input.StickSettleGate;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Element;
-import net.minecraft.client.gui.ParentElement;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.EditBoxWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.input.CharInput;
-import net.minecraft.client.input.KeyInput;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.EditBox;
+import dev.steampad.compat.mc.InputEventCompat;
+import net.minecraft.client.gui.components.MultiLineEditBox;
+import net.minecraft.client.gui.components.events.ContainerEventHandler;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.Screen;
 
 /**
  * Controller-driven on-screen keyboard. Self-contained singleton (mirrors {@link
  * dev.steampad.input.VirtualMouseController}'s style) so it can never disturb existing input when off.
  *
- * <p>It types into whatever text field is focused on the current screen by routing
- * {@link Screen#charTyped(CharInput)} / {@link Screen#keyPressed(KeyInput)} — the same path the real
- * keyboard uses — so it works for vanilla and modded fields alike. It becomes <b>eligible</b> when a
- * text field is focused (or a known text-entry screen is open) and <b>active</b> while it owns input.
+ * <p>It types into whatever text field is focused on the current screen by routing the screen's own
+ * {@code charTyped} / {@code keyPressed} — the same path the real keyboard uses — so it works for
+ * vanilla and modded fields alike. Those signatures changed shape in 1.21.9, so every send goes
+ * through {@link dev.steampad.compat.mc.InputEventCompat} rather than naming the types directly. It
+ * becomes <b>eligible</b> when a text field is focused (or a known text-entry screen is open) and
+ * <b>active</b> while it owns input.
  */
 public final class VirtualKeyboard {
 
@@ -82,14 +84,51 @@ public final class VirtualKeyboard {
     private static final double TAP_MAG_THRESHOLD = 0.55;
     private static final double TAP_RELEASE_THRESHOLD = 0.15;
     private static final long TAP_MAX_MS = 220;
+    /**
+     * How far the pointer may travel and still count as a tap, in nominal key widths.
+     *
+     * <p>Time alone is not enough to tell a tap from a fast deliberate move, and assuming it was is
+     * the SECOND producer of "al soltar el stick... regresa una letra". At full deflection the pointer
+     * runs at {@link #FLOAT_MAX_SPEED} px/tick — around 450 px/s — so a firm 200 ms flick legitimately
+     * crosses two or three keys while still finishing inside {@link #TAP_MAX_MS}. The correction then
+     * threw all of that away, rewound to where the push started and stepped a single key: the player
+     * aimed three letters across, let go, and watched the selection jump backwards.
+     *
+     * <p>A real tap barely moves at all, so the distance settles the question that the clock cannot.
+     * Below this the gesture was a flick and gets its clean one-key step; above it the player was
+     * traversing and the pointer stays where they drove it.
+     */
+    /**
+     * The tap only fires when the free-float did NOT already move the selection off the key the push
+     * started on — the other half of the release "whiplash".
+     *
+     * <p>Reported as: "cuando llego a una letra y suelto retrocede y no selecciona donde tuve el
+     * último foco." The release gate ({@link StickSettleGate}) already commits the aimed key the
+     * instant the stick is let go, but the tap block runs AFTER that commit and used to unconditionally
+     * rewind {@code row}/{@code col} to the push's starting key and step one key along the DOMINANT
+     * axis. So a short diagonal nudge that had legitimately landed on, say, the up-right key was
+     * rewritten to the key on the right — the highlight visibly jumping on release. Requiring the
+     * selection to be untouched keeps the gesture doing the one job it exists for (a push too small
+     * to move the pointer off its own key still steps exactly one key, like a D-pad press) and stops
+     * it from overruling a selection the player already saw and aimed at.
+     */
+    private static final double TAP_MAX_TRAVEL_KEYS = 1.5;
     private static boolean leftPushing = false;
     private static long leftPushStartMs = 0L;
     private static int leftPushStartRow = 0, leftPushStartCol = 0;
     private static double leftPushDirX = 0, leftPushDirY = 0;
+    private static double leftPushStartX = 0, leftPushStartY = 0;
     private static boolean rightPushing = false;
     private static long rightPushStartMs = 0L;
     private static int rightPushStartRow2 = 0, rightPushStartCol2 = 0;
     private static double rightPushDirX = 0, rightPushDirY = 0;
+    private static double rightPushStartX = 0, rightPushStartY = 0;
+
+    // Release handling, one per pointer. See StickSettleGate for the mechanism and the bug it fixes
+    // ("al soltar el stick... muchas veces regresa una letra"): a released stick springs PAST centre
+    // and reads a real deflection the other way, which used to drift the pointer one key back.
+    private static final StickSettleGate leftGate = new StickSettleGate();
+    private static final StickSettleGate rightGate = new StickSettleGate();
 
     // Press-sink visual (feedback: "al presionar una letra del teclado que se hunda, el mismo efecto
     // que con los botones"): the last key pressed by ANY source (A, LB, RB, D-pad+A) renders sunken
@@ -205,14 +244,20 @@ public final class VirtualKeyboard {
      */
     public static void update(Screen screen) {
         boolean enabled = ConfigManager.getGlobal().virtualKeyboardEnabled;
-        if (!enabled || screen == null) { eligible = false; active = false; forcedOpen = false; return; }
+        if (!enabled || screen == null) {
+            eligible = false; active = false; forcedOpen = false;
+            fieldWasFocused = false; fieldJustFocused = false;
+            return;
+        }
 
         // Reset per-screen state when the screen changes.
         String id = screen.getClass().getName();
-        if (!id.equals(lastScreenId)) {
+        boolean screenChanged = !id.equals(lastScreenId);
+        if (screenChanged) {
             lastScreenId = id;
             active = false;   // always start closed on a new screen
             forcedOpen = false;
+            dismissedScreenId = "";   // a new screen may auto-open again (see autoOpenWanted)
             positionTop = false;   // always start at the default (bottom) position on a new screen
             floatValid = false;
             floatValid2 = false;
@@ -223,16 +268,49 @@ public final class VirtualKeyboard {
             lastRightMoveMs = 0L;
             leftPushing = false;
             rightPushing = false;
+            leftGate.reset();
+            rightGate.reset();
             row2 = -1; col2 = -1;
             clampSelection();
         }
 
-        eligible = hasTextEntry(screen);
+        // Spelled out rather than calling hasTextEntry(screen): this needs the two halves separately
+        // (the focus edge below is about the FIELD, not about chat/sign/book screens that are eligible
+        // with no field at all), and resolving the field is a widget-tree walk worth doing once.
+        // Same two conditions, same order — keep them in step with hasTextEntry.
+        boolean hasField = findTextField(screen) != null;
+        eligible = hasField || isTextEntryScreen(screen);
+
+        // Focus EDGE, not focus LEVEL: a text field that went unfocused → focused while we stayed on
+        // the same screen is the user having just clicked/opened a search box, which is exactly when a
+        // phone pops its keyboard up (feedback: "cuando le presionas no sale automaticamente el
+        // teclado, deberia de salir" — the recipe book's search, and the creative search tab).
+        //
+        // Deliberately NOT the level ("a field is focused"): that is the form this file already tried
+        // and reverted, because screens that focus a search box in init() popped the keyboard up
+        // "antes de tiempo". Seeding the flag on the tick the screen changes is what keeps that fixed —
+        // a field focused from the start is never an edge, so those screens still wait for A.
+        if (screenChanged) {
+            fieldJustFocused = false;
+        } else if (hasField && !fieldWasFocused) {
+            fieldJustFocused = true;
+            // An explicit new focus is a fresh intent to type: it outranks an earlier B-to-close on
+            // this same screen, which would otherwise suppress the auto-open forever (see deactivate).
+            dismissedScreenId = "";
+        }
+        fieldWasFocused = hasField;
+
         // A forceActivate() session (see its doc) is intentionally open despite no detectable field —
         // don't let ineligibility auto-close it the very next tick; only B (deactivate()) or leaving
         // the screen should end it.
         if (!eligible && !forcedOpen) { active = false; }
     }
+
+    /** Was a text field focused on the previous tick — the other half of the edge in {@link #update}. */
+    private static boolean fieldWasFocused = false;
+
+    /** A text field gained focus on this screen after it opened; see {@link #autoOpenWanted}. */
+    private static boolean fieldJustFocused = false;
 
     /**
      * Opens the keyboard. Called when A is pressed on a focused text field (Controlify-style manual
@@ -243,7 +321,10 @@ public final class VirtualKeyboard {
         if (!eligible) return;
         active = true;
         forcedOpen = false;
+        fieldJustFocused = false;   // the edge has been consumed
         floatValid = false;   // the float cursor re-syncs to the selected key on first stick use
+        leftGate.reset();
+        rightGate.reset();
         leftEngaged = false;
         rightEngaged = false;
         dpadShowing = false;
@@ -262,7 +343,10 @@ public final class VirtualKeyboard {
     public static void forceActivate() {
         active = true;
         forcedOpen = true;
+        fieldJustFocused = false;   // the edge has been consumed
         floatValid = false;
+        leftGate.reset();
+        rightGate.reset();
         leftEngaged = false;
         rightEngaged = false;
         dpadShowing = false;
@@ -274,6 +358,30 @@ public final class VirtualKeyboard {
     public static void deactivate() {
         active = false;
         forcedOpen = false;
+        fieldJustFocused = false;   // B means "not now", so the pending edge dies with it
+        // Remember that the user closed it HERE, so the level-triggered auto-open (see
+        // {@link #autoOpenWanted}) does not immediately pop it back up on the very next tick.
+        dismissedScreenId = lastScreenId;
+    }
+
+    /** Screen the user last closed the keyboard on — see {@link #deactivate}/{@link #autoOpenWanted}. */
+    private static String dismissedScreenId = "";
+
+    /**
+     * True when the keyboard should auto-open on this screen right now.
+     *
+     * <p>Deliberately LEVEL-triggered (a standing condition), not edge-triggered. The previous
+     * edge-triggered form fired only on the single tick where eligibility flipped false→true, so any
+     * tick that swallowed that transition — a screen opening while eligibility was already true, a
+     * tick consumed by another early-return in the dispatcher — silently lost the auto-open forever
+     * with no way to recover except leaving and re-entering the screen. That is consistent with
+     * "el teclado sigue sin abrir en Letreros". Checking the condition every tick instead cannot miss
+     * it; {@link #dismissedScreenId} is what keeps B-to-close from being undone a tick later.
+     */
+    public static boolean autoOpenWanted(Screen screen) {
+        return eligible && !active
+                && (isTextEntryScreen(screen) || fieldJustFocused)
+                && !lastScreenId.equals(dismissedScreenId);
     }
 
     /**
@@ -282,13 +390,52 @@ public final class VirtualKeyboard {
      * keyboard has been manually moved to the TOP of the screen (feedback: "en gamplay en chat, si se
      * mueve hacia arriba vuelve la posicion de la entrada de texto de chat original" — with the
      * keyboard out of the way up top, vanilla's own bottom-anchored chat box no longer needs to move).
-     * Read every frame by the ChatScreen/ChatHud mixins (Controlify-style chat push-up).
+     * Read every frame by the Chat/SignEdit/BookEdit screen mixins (Controlify-style push-up).
+     *
+     * <p>Covers every {@link #isTextEntryScreen} screen, not just chat — sign and book editing
+     * auto-open the keyboard exactly the same way (see that method's doc), so their own UI needs the
+     * same treatment or the keyboard panel overlaps it just as it would chat's input line.
      */
-    public static int chatPushUp(Screen screen) {
-        if (!active || positionTop || !(screen instanceof net.minecraft.client.gui.screen.ChatScreen)) return 0;
+    public static int textEntryPushUp(Screen screen) {
+        if (!active || positionTop || !isTextEntryScreen(screen)) return 0;
         KeyboardGeometry.Panel p = KeyboardGeometry.layout(screen.width, screen.height, true, false, grid());
-        return screen.height - p.panelTop();
+        int panelHeight = screen.height - p.panelTop();
+
+        // How far to push depends on where the screen anchors its content, and the two cases are
+        // opposite. Chat's input line is anchored to the BOTTOM edge, so it has to clear the whole
+        // panel — the full height is correct there and is the value already confirmed working.
+        //
+        // Sign and book editors instead draw their content CENTRED on the screen. Pushing those by the
+        // full panel height moved them roughly half a panel too far and shoved the sign off the top
+        // ("empuja todo el cartel y el cartel sale de la pantalla"). What they need is to be re-centred
+        // inside the space the keyboard leaves free: content centred at height/2 should end up centred
+        // at panelTop/2, so the shift is (height - panelTop)/2 — exactly half the panel. Derived from
+        // the geometry rather than tuned by eye, so it holds at any GUI scale or keyboard size.
+        boolean centredContent = !(screen instanceof net.minecraft.client.gui.screens.ChatScreen);
+        return centredContent ? panelHeight / 2 : panelHeight;
     }
+
+    // ---- Push-up re-entrancy guard -------------------------------------------------------------
+    //
+    // The chat history is NOT drawn independently of the chat screen: ChatScreen.render() calls
+    // ChatComponent.render() itself, as its very first statement, on BOTH target versions — and the
+    // HUD's own Gui.renderChat() opens with `if (chat.isChatFocused()) return;`, so while the chat
+    // screen is up the screen is the ONLY thing drawing that history. All three facts javap-confirmed
+    // on the mapped 1.21.1 and 1.21.10 jars.
+    //
+    // So ChatHudMixin's push was always nested INSIDE ChatScreenMixin's push, and the history got
+    // translated twice while the input line got translated once — the history flying far above the
+    // typing bar ("cuando abres el teclado el chat se manda muy por encima de la barra de escritura").
+    // This flag makes the outer push claim the frame; the inner one stands down and only acts if some
+    // other mod ever draws the history outside ChatScreen.render(), which is what it was written for.
+
+    private static boolean pushInProgress = false;
+
+    /** True while a screen-level push-up translation is already applied around this draw. */
+    public static boolean isPushInProgress() { return pushInProgress; }
+
+    /** Claimed by the screen-level push (ChatScreenMixin) for the duration of its render. */
+    public static void setPushInProgress(boolean inProgress) { pushInProgress = inProgress; }
 
     // ---- Panel position (feedback: "agrega un chord de teclado DUP+RT pra mover el teclado hasta
     // arriba, y ciclado que si presionas tambien vuelva a su posicion, esto es para que no tape la
@@ -304,6 +451,8 @@ public final class VirtualKeyboard {
         positionTop = !positionTop;
         floatValid = false;   // the float cursor re-syncs to the selected key at its new panel rect
         floatValid2 = false;  // the right pointer re-syncs at the new panel rect too
+        leftGate.reset();     // the panel moved under both pointers — treat it as a fresh start
+        rightGate.reset();
     }
 
     /**
@@ -313,9 +462,18 @@ public final class VirtualKeyboard {
      */
     public static boolean isTextEntryScreen(Screen screen) {
         if (screen == null) return false;
-        if (screen instanceof net.minecraft.client.gui.screen.ChatScreen) return true;
-        String n = screen.getClass().getName();
-        return n.contains("SignEditScreen") || n.contains("BookEditScreen") || n.contains("AbstractSignEditScreen");
+        // instanceof, NEVER getClass().getName().contains("…"). In a production (remapped) install
+        // Minecraft's classes carry INTERMEDIARY names — screen.getClass().getName() returns
+        // "net.minecraft.class_7529", never "SignEditScreen" — while a string literal in our source is
+        // not remapped at all. Confirmed by disassembling the shipped jar: the literals
+        // "SignEditScreen"/"BookEditScreen" survive verbatim while the ChatScreen type reference became
+        // class_408. So the old string test passed in dev and ALWAYS failed in the real game: chat
+        // (an instanceof) worked, signs and books never did — no auto-open, no badge, nothing
+        // ("el teclado sigue sin abrir en Letreros", "no aparece el BIND"). instanceof is remapped by
+        // Loom along with everything else and therefore works in both environments.
+        return screen instanceof net.minecraft.client.gui.screens.ChatScreen
+                || screen instanceof net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen
+                || screen instanceof net.minecraft.client.gui.screens.inventory.BookEditScreen;
     }
 
     /**
@@ -324,8 +482,8 @@ public final class VirtualKeyboard {
      */
     public static boolean pointInFocusedTextField(Screen screen, double x, double y) {
         if (screen == null) return false;   // a click can close the screen mid-tick — never NPE
-        Element f = findTextField(screen);
-        if (f instanceof net.minecraft.client.gui.widget.ClickableWidget w) {
+        GuiEventListener f = findTextField(screen);
+        if (f instanceof net.minecraft.client.gui.components.AbstractWidget w) {
             return x >= w.getX() && x < w.getX() + w.getWidth()
                     && y >= w.getY() && y < w.getY() + w.getHeight();
         }
@@ -372,10 +530,10 @@ public final class VirtualKeyboard {
      */
     public static void stickFloat(float sx, float sy) {
         if (!active) return;
-        Screen s = mc().currentScreen;
+        Screen s = mc().screen;
         if (s == null) return;
         KeyboardGeometry.Panel p = KeyboardGeometry.layout(
-                s.width, s.height, s instanceof net.minecraft.client.gui.screen.ChatScreen, positionTop, grid());
+                s.width, s.height, s instanceof net.minecraft.client.gui.screens.ChatScreen, positionTop, grid());
         if (p.keys().isEmpty()) return;
         // Any real push of THIS stick makes its orb/selection visible and hands the main slot back
         // to the stick from the D-pad (see the engaged-flag doc above).
@@ -387,12 +545,17 @@ public final class VirtualKeyboard {
 
         if (!floatValid) { syncFloatToSelection(p); prevMag = 0.0; }
 
+        double mag = Math.min(1.0, Math.sqrt(sx * sx + sy * sy));
+        // Release gate FIRST, before either response mode — spring-back is a property of the stick,
+        // so both the velocity and the absolute-pointer mode need protecting from it.
+        boolean drive = leftGate.accept(mag, System.currentTimeMillis());
+        if (leftGate.consumeJustSettled()) commitToNearest(p, false);
+
         if (ConfigManager.getGlobal().virtualKeyboardStickMode == dev.steampad.config.GlobalConfig.KeyboardStickMode.POINTER) {
-            stickPointer(sx, sy, p);
+            if (drive) stickPointer(sx, sy, p);
             return;
         }
 
-        double mag = Math.min(1.0, Math.sqrt(sx * sx + sy * sy));
         boolean braking = mag < prevMag - BRAKE_DELTA;
         prevMag = mag;
 
@@ -403,14 +566,21 @@ public final class VirtualKeyboard {
             leftPushStartCol = col;
             leftPushDirX = sx;
             leftPushDirY = sy;
+            leftPushStartX = floatX;
+            leftPushStartY = floatY;
         } else if (leftPushing && mag < TAP_RELEASE_THRESHOLD) {
             leftPushing = false;
-            if (System.currentTimeMillis() - leftPushStartMs < TAP_MAX_MS) {
-                row = leftPushStartRow;
-                col = leftPushStartCol;
+            if (System.currentTimeMillis() - leftPushStartMs < TAP_MAX_MS
+                    && row == leftPushStartRow && col == leftPushStartCol
+                    && isTapTravel(p, floatX - leftPushStartX, floatY - leftPushStartY)) {
                 stepSelectionOnce(leftPushDirX, leftPushDirY, false);
                 return;   // tap resolved — skip this frame's continuous drift entirely
             }
+        }
+
+        if (!drive) {
+            tickScale(false);   // frozen by the release gate: no drift AND no re-snap, so the key
+            return;             // committed above cannot be pulled off by the spring-back.
         }
 
         if (mag > 0.001) {
@@ -431,6 +601,21 @@ public final class VirtualKeyboard {
             floatX += (nearest.centerX() - floatX) * pull;
             floatY += (nearest.centerY() - floatY) * pull;
         }
+    }
+
+    /**
+     * Whether a gesture's travel is small enough to still count as a tap rather than a deliberate
+     * move — see {@link #TAP_MAX_TRAVEL_KEYS}.
+     *
+     * <p>The nominal key width comes from the grid itself: the letter rows lay ten keys across the
+     * full grid width, so a tenth of it is a real key, not an average skewed by the wide Space bar.
+     * Deriving it means the threshold holds at any GUI scale, window size or keyboard height.
+     */
+    private static boolean isTapTravel(KeyboardGeometry.Panel p, double dx, double dy) {
+        double keyW = (p.gridRight() - p.gridLeft()) / 10.0;
+        if (keyW <= 0) return true;
+        double limit = keyW * TAP_MAX_TRAVEL_KEYS;
+        return dx * dx + dy * dy <= limit * limit;
     }
 
     /** Steps the selection by exactly one key in the dominant direction of (dirX, dirY) — the tap
@@ -485,10 +670,10 @@ public final class VirtualKeyboard {
      */
     public static void stickFloatRight(float sx, float sy) {
         if (!active || !isDualStick()) return;
-        Screen s = mc().currentScreen;
+        Screen s = mc().screen;
         if (s == null) return;
         KeyboardGeometry.Panel p = KeyboardGeometry.layout(
-                s.width, s.height, s instanceof net.minecraft.client.gui.screen.ChatScreen, positionTop, grid());
+                s.width, s.height, s instanceof net.minecraft.client.gui.screens.ChatScreen, positionTop, grid());
         if (p.keys().isEmpty()) return;
         // Any real push of THIS stick makes its orb/selection visible (see the engaged-flag doc above).
         if (sx * sx + sy * sy > 0.01) {
@@ -498,12 +683,15 @@ public final class VirtualKeyboard {
 
         if (!floatValid2) syncFloatRight(p);
 
+        double mag = Math.min(1.0, Math.sqrt(sx * sx + sy * sy));
+        boolean drive = rightGate.accept(mag, System.currentTimeMillis());
+        if (rightGate.consumeJustSettled()) commitToNearest(p, true);
+
         if (ConfigManager.getGlobal().virtualKeyboardStickMode == dev.steampad.config.GlobalConfig.KeyboardStickMode.POINTER) {
-            stickPointerRight(sx, sy, p);
+            if (drive) stickPointerRight(sx, sy, p);
             return;
         }
 
-        double mag = Math.min(1.0, Math.sqrt(sx * sx + sy * sy));
         boolean braking = mag < prevMag2 - BRAKE_DELTA;
         prevMag2 = mag;
 
@@ -514,14 +702,21 @@ public final class VirtualKeyboard {
             rightPushStartCol2 = col2;
             rightPushDirX = sx;
             rightPushDirY = sy;
+            rightPushStartX = floatX2;
+            rightPushStartY = floatY2;
         } else if (rightPushing && mag < TAP_RELEASE_THRESHOLD) {
             rightPushing = false;
-            if (System.currentTimeMillis() - rightPushStartMs < TAP_MAX_MS) {
-                row2 = rightPushStartRow2;
-                col2 = rightPushStartCol2;
+            if (System.currentTimeMillis() - rightPushStartMs < TAP_MAX_MS
+                    && row2 == rightPushStartRow2 && col2 == rightPushStartCol2
+                    && isTapTravel(p, floatX2 - rightPushStartX, floatY2 - rightPushStartY)) {
                 stepSelectionOnce(rightPushDirX, rightPushDirY, true);
                 return;   // tap resolved — skip this frame's continuous drift entirely
             }
+        }
+
+        if (!drive) {
+            tickScale(true);
+            return;
         }
 
         if (mag > 0.001) {
@@ -617,6 +812,28 @@ public final class VirtualKeyboard {
         }
     }
 
+    /**
+     * Locks a pointer onto whatever key it is aiming at, right now, with no easing left over — the
+     * "you let go, so this is your letter" commit. Called on the release edge (see
+     * {@link StickSettleGate#consumeJustSettled()}), before the spring-back has a chance to be read.
+     */
+    private static void commitToNearest(KeyboardGeometry.Panel p, boolean rightPointer) {
+        KeyboardGeometry.KeyRect n = p.nearest(rightPointer ? floatX2 : floatX,
+                                               rightPointer ? floatY2 : floatY);
+        if (n == null) return;
+        if (rightPointer) {
+            row2 = n.row();
+            col2 = n.col();
+            floatX2 = n.centerX();
+            floatY2 = n.centerY();
+        } else {
+            row = n.row();
+            col = n.col();
+            floatX = n.centerX();
+            floatY = n.centerY();
+        }
+    }
+
     private static void syncFloatToSelection(KeyboardGeometry.Panel p) {
         KeyboardGeometry.KeyRect r = p.rectAt(row, col);
         if (r == null && !p.keys().isEmpty()) r = p.keys().get(0);
@@ -658,14 +875,54 @@ public final class VirtualKeyboard {
         pressAt(row, col);
     }
 
-    /** LB in dual-stick mode: press the LEFT pointer's key (same as the A/D-pad selection). */
+    /**
+     * LB: presses the LEFT pointer's own key — always, whichever stick moved last.
+     *
+     * <p>It used to delegate to {@link #pressSelected()}, which picks by recency, so LB typed the
+     * RIGHT pointer's letter whenever the right stick had been touched more recently ("actualmente LB
+     * también puede seleccionar una letra de RB si está activo, esto solo debería poder hacerlo el
+     * botón A"). Each bumper now owns its own pointer, and only A arbitrates between them.
+     *
+     * <p>Works whether or not the orb is currently drawn: the selection auto-hides after a moment of
+     * stick idleness, but {@code row}/{@code col} still remember where that pointer is ("aunque esté
+     * oculto si presiono RB o LB solamente afecte al stick"). Pressing also reveals the orb briefly,
+     * so it is visible what was typed.
+     */
     public static void pressLeftPointer() {
-        pressSelected();
+        clampSelection();
+        revealLeft();
+        pressAt(row, col);
     }
 
-    /** RB in dual-stick mode: press the RIGHT pointer's key. No-op until that pointer has synced. */
+    /**
+     * RB: presses the RIGHT pointer's own key. If that pointer has never been used this session it is
+     * first placed at its home position rather than doing nothing, so RB always types something.
+     */
     public static void pressRightPointer() {
-        if (row2 >= 0) pressAt(row2, col2);
+        if (row2 < 0) {
+            Screen s = mc().screen;
+            if (s == null) return;
+            KeyboardGeometry.Panel p = KeyboardGeometry.layout(
+                    s.width, s.height, s instanceof net.minecraft.client.gui.screens.ChatScreen,
+                    positionTop, grid());
+            if (p.keys().isEmpty()) return;
+            syncFloatRight(p);
+            if (row2 < 0) return;
+        }
+        revealRight();
+        pressAt(row2, col2);
+    }
+
+    /** Makes the left orb/brackets visible and hands the "most recent" slot to it. */
+    private static void revealLeft() {
+        leftEngaged = true;
+        lastLeftMoveMs = System.currentTimeMillis();
+    }
+
+    /** Makes the right orb/brackets visible and hands the "most recent" slot to it. */
+    private static void revealRight() {
+        rightEngaged = true;
+        lastRightMoveMs = System.currentTimeMillis();
     }
 
     /** Presses the key at a grid position — shared by A (selection), LB and RB (pointers). Also
@@ -687,12 +944,21 @@ public final class VirtualKeyboard {
             case BACKSPACE -> backspace();
             case ENTER -> enter();
             case SHIFT -> { shift = !shift; sound(); }
+            // The GLFW key code lives in codepoint() for this type (see KeyboardLayout.Key's doc).
+            // Same pipeline as Backspace/Enter/Tab, so the arrows reach whatever the screen routes
+            // them to — caret movement in a field, selection movement in a list.
+            case ARROW -> { pressKey(k.codepoint()); sound(); }
+            case SELECT_ALL -> { ClipboardActions.selectAll(mc().screen); sound(); }
+            case COPY -> { ClipboardActions.copy(mc().screen); sound(); }
+            case PASTE -> { ClipboardActions.paste(mc().screen); sound(); }
             case LAYER -> {
                 layer = (layer == Layer.LETTERS) ? Layer.SYMBOLS : Layer.LETTERS;
                 clampSelection();
                 floatValid = false;
                 // The grid changed under both pointers — the right one must re-resolve too.
                 floatValid2 = false;
+                leftGate.reset();
+                rightGate.reset();
                 row2 = -1;
                 col2 = -1;
                 sound();
@@ -707,26 +973,55 @@ public final class VirtualKeyboard {
     public static void caretRight() { pressKey(GLFW.GLFW_KEY_RIGHT); }
     public static void shiftToggle() { shift = !shift; sound(); }
 
+    /**
+     * Sends TAB — command completion while typing in chat.
+     *
+     * <p>Goes through the same real key pipeline as every other key here, which is what makes it
+     * work: {@code ChatScreen.keyPressed} hands the event to its {@code CommandSuggestions} FIRST
+     * (confirmed in the bytecode of both target versions), and that is what completes {@code /tp},
+     * a player name, an item id and so on. Bound to the right stick click — feedback: "cuando estoy
+     * escribiendo en el chat un comando que el click del stick derecho sea el TAB".
+     */
+    public static void tabComplete() { pressKey(GLFW.GLFW_KEY_TAB); sound(); }
+
+    /** True while the screen under the keyboard is the chat — where {@link #tabComplete()} means
+     *  something. Used by the dispatcher and by the footer hint row. */
+    public static boolean isChatScreen() {
+        return mc().screen instanceof net.minecraft.client.gui.screens.ChatScreen;
+    }
+
+    /** Types a whole string through the normal per-character path (used by the paste key's universal
+     *  fallback — see {@link ClipboardActions#paste}). Shift stays off: the text is already cased. */
+    static void typeText(String text) {
+        if (text == null || text.isEmpty()) return;
+        boolean savedShift = shift;
+        shift = false;
+        try {
+            text.codePoints().forEach(VirtualKeyboard::typeChar);
+        } finally {
+            shift = savedShift;
+        }
+    }
+
     private static void typeChar(int codepoint) {
         int cp = codepoint;
         if (shift && Character.isLetter(cp)) cp = Character.toUpperCase(cp);
-        Screen s = mc().currentScreen;
+        Screen s = mc().screen;
         if (s == null) return;
-        CharInput input = new CharInput(cp, 0);
         // Real Keyboard.onChar (widened via the access widener) instead of calling Screen.charTyped
         // directly — mods built on Architectury API (Roughly Enough Items and others) intercept typing
         // via mixins on the CALL SITE of Screen.charTyped INSIDE Keyboard.onChar, so a direct call
         // from here never reached them (feedback: "poder escribir en su busqueda"). onChar internally
         // does exactly what Screen.charTyped(input) did before, so vanilla/well-behaved-mod screens —
         // whose focused field vanilla's own getFocused() chain already resolves — are unaffected.
-        boolean routedByScreen = isTextWidget(deepestFocused(s));
-        fireCharReal(input);
+        boolean routedByScreen = isTextWidget(deepestFocused(s)) || recipeBookSearchField(s) != null;
+        InputEventCompat.fireCharTyped(mc(), cp, 0);
         // Screens whose text field is focused internally but not via Screen.getFocused() (the Xaero's
         // case) still need direct-to-field delivery — onChar's internal Screen.charTyped call can't
         // find that field either, only our own duck-typed/recursive resolution can.
         if (!routedByScreen) {
-            Element field = findTextField(s);
-            if (field != null) field.charTyped(input);
+            GuiEventListener field = findTextField(s);
+            if (field != null) InputEventCompat.charTyped(field, cp, 0);
         }
         // Shift is one-shot for letters (phone-style); release after a letter.
         if (shift && Character.isLetter(codepoint)) shift = false;
@@ -734,31 +1029,18 @@ public final class VirtualKeyboard {
     }
 
     private static void pressKey(int glfwKey) {
-        Screen s = mc().currentScreen;
+        Screen s = mc().screen;
         if (s == null) return;
         int scancode = 0;
         try { int sc = GLFW.glfwGetKeyScancode(glfwKey); if (sc > 0) scancode = sc; } catch (Throwable ignored) {}
-        KeyInput input = new KeyInput(glfwKey, scancode, 0);
         // Same real-pipeline routing as typeChar — see its doc for why. The screen may legitimately
         // consume some keys itself (Enter = Done, etc.) — that's the desired order either way.
-        boolean routedByScreen = isTextWidget(deepestFocused(s));
-        fireKeyReal(input);
-        if (!routedByScreen && mc().currentScreen == s) {   // a key can close the screen — re-check
-            Element field = findTextField(s);
-            if (field != null) field.keyPressed(input);
+        boolean routedByScreen = isTextWidget(deepestFocused(s)) || recipeBookSearchField(s) != null;
+        InputEventCompat.fireKeyPress(mc(), GLFW.GLFW_PRESS, glfwKey, scancode, 0);
+        if (!routedByScreen && mc().screen == s) {   // a key can close the screen — re-check
+            GuiEventListener field = findTextField(s);
+            if (field != null) InputEventCompat.keyPressed(field, glfwKey, scancode, 0);
         }
-    }
-
-    private static void fireCharReal(CharInput input) {
-        MinecraftClient mc = mc();
-        if (mc.keyboard == null) return;
-        mc.keyboard.onChar(mc.getWindow().getHandle(), input);
-    }
-
-    private static void fireKeyReal(KeyInput input) {
-        MinecraftClient mc = mc();
-        if (mc.keyboard == null) return;
-        mc.keyboard.onKey(mc.getWindow().getHandle(), GLFW.GLFW_PRESS, input);
     }
 
     private static void sound() {
@@ -767,18 +1049,28 @@ public final class VirtualKeyboard {
 
     // ---- Focus / preview -----------------------------------------------------------------
 
+    /**
+     * True for a pure text-entry screen that exposes NO focusable text widget of its own — sign and
+     * book editors, which draw and edit their text themselves. There is nothing for a click or an A
+     * press to land on there, so those screens need A to open the keyboard directly; chat is excluded
+     * because it does have a real input widget and its existing click behaviour must stay untouched.
+     */
+    public static boolean isFieldlessTextEntry(Screen screen) {
+        return isTextEntryScreen(screen) && findTextField(screen) == null;
+    }
+
     /** True if the current screen has a focused text field (or is a known text-entry screen). */
     public static boolean hasTextEntry(Screen screen) {
         if (findTextField(screen) != null) return true;
-        // Screens that handle charTyped at the screen level (no focused TextFieldWidget).
-        String n = screen.getClass().getName();
-        return n.contains("SignEditScreen") || n.contains("BookEditScreen") || n.contains("AbstractSignEditScreen");
+        // Screens that handle charTyped at the screen level (no focused text-field widget). Same
+        // instanceof-not-class-name rule as isTextEntryScreen — see its comment for the disassembly.
+        return isTextEntryScreen(screen);
     }
 
     /** The text currently in the focused field (for the preview strip), or null. */
     public static String previewText(Screen screen) {
-        Element f = findTextField(screen);
-        if (f instanceof TextFieldWidget tf) return tf.getText();
+        GuiEventListener f = findTextField(screen);
+        if (f instanceof EditBox tf) return tf.getValue();
         return null;
     }
 
@@ -795,9 +1087,9 @@ public final class VirtualKeyboard {
      * </ol>
      * Returns null when the screen has no active text entry.
      */
-    public static Element findTextField(Screen screen) {
+    public static GuiEventListener findTextField(Screen screen) {
         if (screen == null) return null;
-        Element f = deepestFocused(screen);
+        GuiEventListener f = deepestFocused(screen);
         if (isTextWidget(f)) return f;
         return findFocusedTextWidget(screen, 0);
     }
@@ -813,9 +1105,9 @@ public final class VirtualKeyboard {
      * same JVM quirk). Reflection on an arbitrary, unknown widget class from a 100+-mod pack must
      * never be allowed to bring down the tick loop — catching {@code Throwable} here is deliberate.
      */
-    private static boolean isTextWidget(Element e) {
+    private static boolean isTextWidget(GuiEventListener e) {
         if (e == null) return false;
-        if (e instanceof TextFieldWidget || e instanceof EditBoxWidget) return true;
+        if (e instanceof EditBox || e instanceof MultiLineEditBox) return true;
         try {
             String n = e.getClass().getSimpleName();
             // "SearchField" covers Roughly Enough Items' OverlaySearchField (feedback: "poder escribir
@@ -828,27 +1120,57 @@ public final class VirtualKeyboard {
         }
     }
 
+    /**
+     * The recipe book's search field on this screen, when it is focused; null otherwise.
+     *
+     * <p>Needs its own step because the book is a dead end for the generic walk below: it is a child
+     * of the screen, but {@code RecipeBookComponent} is a {@code GuiEventListener} and NOT a
+     * {@code ContainerEventHandler} (javap-confirmed on both target versions), so it exposes no
+     * {@code children()} to descend into and its {@code searchBox} is private — hence
+     * {@link dev.steampad.mixin.RecipeBookSearchAccessor}.
+     *
+     * <p>Also answers "does the screen itself already route typing here?" for {@link #typeChar} and
+     * {@link #pressKey}: it does — {@code CraftingScreen.charTyped/keyPressed} (1.21.1) and
+     * {@code AbstractRecipeBookScreen.charTyped/keyPressed} (1.21.10) both hand the event to the book
+     * before anything else, javap-confirmed. Without that check those two would ALSO deliver straight
+     * to the field and every keystroke would land twice.
+     */
+    private static EditBox recipeBookSearchField(Screen screen) {
+        if (screen == null) return null;
+        for (GuiEventListener child : screen.children()) {
+            if (child instanceof net.minecraft.client.gui.screens.recipebook.RecipeBookComponent) {
+                EditBox box = ((dev.steampad.mixin.RecipeBookSearchAccessor) child).steampad$searchBox();
+                if (box != null && box.isFocused()) return box;
+            }
+        }
+        return null;
+    }
+
     /** Depth-first search of the widget tree for a text widget that reports itself focused. */
-    private static Element findFocusedTextWidget(ParentElement parent, int depth) {
+    private static GuiEventListener findFocusedTextWidget(ContainerEventHandler parent, int depth) {
         if (depth > 6) return null;   // cycle/absurd-nesting guard
-        for (Element child : parent.children()) {
+        if (parent instanceof Screen s) {
+            EditBox book = recipeBookSearchField(s);
+            if (book != null) return book;
+        }
+        for (GuiEventListener child : parent.children()) {
             if (isTextWidget(child) && child.isFocused()) return child;
-            if (child instanceof ParentElement pe) {
-                Element found = findFocusedTextWidget(pe, depth + 1);
+            if (child instanceof ContainerEventHandler pe) {
+                GuiEventListener found = findFocusedTextWidget(pe, depth + 1);
                 if (found != null) return found;
             }
         }
         return null;
     }
 
-    private static Element deepestFocused(Screen screen) {
-        Element f = screen.getFocused();
+    private static GuiEventListener deepestFocused(Screen screen) {
+        GuiEventListener f = screen.getFocused();
         int guard = 0;
-        while (f instanceof ParentElement pe && pe.getFocused() != null && guard++ < 16) {
+        while (f instanceof ContainerEventHandler pe && pe.getFocused() != null && guard++ < 16) {
             f = pe.getFocused();
         }
         return f;
     }
 
-    private static MinecraftClient mc() { return MinecraftClient.getInstance(); }
+    private static Minecraft mc() { return Minecraft.getInstance(); }
 }

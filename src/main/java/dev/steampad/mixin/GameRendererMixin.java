@@ -2,8 +2,8 @@ package dev.steampad.mixin;
 
 import dev.steampad.input.JuiceController;
 import dev.steampad.input.ZoomController;
-import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.GameRenderer;
+import net.minecraft.client.Camera;
+import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -29,13 +29,36 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(GameRenderer.class)
 public abstract class GameRendererMixin {
 
-    @Inject(method = "getFov(Lnet/minecraft/client/render/Camera;FZ)F", at = @At("RETURN"), cancellable = true)
+    // The PARAMETERS are identical on every supported version but the RETURN TYPE is not: getFov
+    // returns double on 1.21.1 and float from 1.21.9. That changes the descriptor in the @Inject
+    // selector, the CallbackInfoReturnable type parameter and the getter — and a wrong descriptor here
+    // is a hard startup crash, not a compile error (this exact mismatch crashed 1.21.1 the first time).
+    //? if >=1.21.9 {
+    @Inject(method = "getFov(Lnet/minecraft/client/Camera;FZ)F", at = @At("RETURN"), cancellable = true)
     private void steampad$applyZoom(Camera camera, float tickProgress, boolean changingFov,
                                     CallbackInfoReturnable<Float> cir) {
         if (!changingFov) return;   // hand renderer — leave untouched
-        float factor = ZoomController.fovFactor() * JuiceController.fovMultiplier();
+        float factor = steampad$fovFactor();
         if (factor < 0.9995f) {
             cir.setReturnValue(cir.getReturnValueF() * factor);
         }
+    }
+    //?} else {
+    /*@Inject(method = "getFov(Lnet/minecraft/client/Camera;FZ)D", at = @At("RETURN"), cancellable = true)
+    private void steampad$applyZoom(Camera camera, float tickProgress, boolean changingFov,
+                                    CallbackInfoReturnable<Double> cir) {
+        if (!changingFov) return;   // hand renderer — leave untouched
+        float factor = steampad$fovFactor();
+        if (factor < 0.9995f) {
+            cir.setReturnValue(cir.getReturnValueD() * factor);
+        }
+    }
+    *///?}
+
+    /** Zoom and impact-kick multiplied together, so a hit landing while zoomed still punches in
+     *  relative to whatever FOV the zoom already set. Shared by both version branches. */
+    @org.spongepowered.asm.mixin.Unique
+    private static float steampad$fovFactor() {
+        return ZoomController.fovFactor() * JuiceController.fovMultiplier();
     }
 }

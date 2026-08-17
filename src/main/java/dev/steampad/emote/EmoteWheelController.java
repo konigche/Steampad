@@ -5,10 +5,9 @@ import dev.steampad.config.RadialConfig;
 import dev.steampad.radial.RadialActionType;
 import dev.steampad.radial.RadialSlot;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 
 /**
  * Controls the dedicated EMOTE WHEEL's lifecycle — open/close, stick navigation, execution — fully
@@ -29,6 +28,11 @@ public final class EmoteWheelController {
 
     private static boolean open = false;
     private static int selectedSlot = -1;
+
+    /** Stops a released stick's spring-back from re-pointing the selection — see
+     *  {@code RadialMenuController#updateAnalog}. Reset on every open. */
+    private static final dev.steampad.input.StickSettleGate stickGate =
+            new dev.steampad.input.StickSettleGate();
     private static long activeHandle = 0L;
     private static int slotCount = 0;
     private static List<RadialSlot> slots = new ArrayList<>();
@@ -64,16 +68,32 @@ public final class EmoteWheelController {
         LogUtil.debug("Emote wheel switched to page {}", page);
     }
 
+    /**
+     * Ids used to pre-fill a brand-new emote wheel so it never opens blank on first use. Takes the
+     * library's own order, which is what "los 8 primeros de la lista" means to the player — the same
+     * order the Emote Library screen shows. Empty when no emotes are installed, in which case the
+     * wheel is created empty exactly as before.
+     */
+    public static java.util.List<String> defaultSeedIds() {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (var e : EmoteLibrary.all()) {
+            if (ids.size() >= 8) break;
+            ids.add(e.id());
+        }
+        return ids;
+    }
+
     /** Opens (creating the dedicated emote wheel on first use) and loads its slots. */
     public static void open(long handle) {
         if (open) return;
         activeHandle = handle;
         RadialConfig cfg = ConfigManager.getRadialConfig(handle);
-        int idx = cfg.ensureEmoteWheel();
+        int idx = cfg.ensureEmoteWheel(defaultSeedIds());
         if (idx < 0) return;   // MAX_WHEELS emote wheels already exist — nothing to open
         ConfigManager.saveRadialConfig(handle);   // persist the wheel if just created
         page = idx;
         loadSlots(handle);
+        stickGate.reset();   // a fresh wheel must never inherit the last gesture's release lockout
         open = true;
         selectedSlot = -1;
         dev.steampad.radial.RadialRenderer.resetBlob();   // the jelly blob starts from the wheel center
@@ -97,12 +117,14 @@ public final class EmoteWheelController {
         selectedSlot = -1;
     }
 
-    /** Update selection based on right-stick input — same sticky-selection behavior as the regular
-     *  radial menu (see {@code RadialMenuController#updateAnalog} for why). */
+    /** Update selection based on right-stick input — same sticky-selection behavior AND the same
+     *  release-whiplash protection as the regular radial menu (see
+     *  {@code RadialMenuController#updateAnalog} for both, and for the evidence). */
     public static void updateAnalog(float x, float y) {
         if (slotCount <= 0) return;
         float mag = (float) Math.sqrt(x * x + y * y);
-        if (mag < 0.35f) return;
+        if (!stickGate.accept(mag, System.currentTimeMillis())) return;
+        if (mag < dev.steampad.input.StickSettleGate.REENGAGE_MAG) return;
         double angle = Math.atan2(y, x) + Math.PI / 2.0;
         if (angle < 0) angle += 2 * Math.PI;
         double sector = 2 * Math.PI / slotCount;
@@ -128,13 +150,20 @@ public final class EmoteWheelController {
         if (!slot.isEmpty()) executeSlot(slot);
     }
 
-    /** Opens the emote wheel's editor (Botones → Configurar rueda de emotes). */
+    /** LT while the wheel is open: jumps straight into the Emote Library for the FOCUSED slot
+     *  (feedback, D111: "que me mande directamente a la biblioteca de emotes") instead of the wheel
+     *  editor — picking an emote there is almost always what pressing this trigger is FOR. "Back"
+     *  from the Library goes to the full wheel editor (all slots, add/remove wheel, slot count —
+     *  unchanged), and "back" from there exits exactly as before (parent=null). Defaults to slot 0 if
+     *  the user pressed the trigger before ever moving the stick (selectedSlot still -1). */
     public static void openEditorForSelected() {
         if (!open) return;
         long handle = activeHandle;
+        int slotIdx = Math.max(0, selectedSlot);
         dismiss();
-        MinecraftClient.getInstance().setScreen(
-                new dev.steampad.screen.EmoteWheelScreen(null, handle));
+        var editor = new dev.steampad.screen.EmoteWheelScreen(null, handle);
+        Minecraft.getInstance().setScreen(new dev.steampad.screen.EmoteLibraryScreen(
+                editor, emoteId -> editor.assignAndPersist(slotIdx, emoteId)));
     }
 
     private static void executeSlot(RadialSlot slot) {
@@ -157,8 +186,16 @@ public final class EmoteWheelController {
             RadialActionType type;
             try { type = RadialActionType.valueOf(sc.type); }
             catch (IllegalArgumentException e) { type = RadialActionType.NONE; }
+            // Short display name (D111: "usa el nombre corto") from the emote's CURRENT name, not the
+            // possibly-longer one baked into displayName at assignment time — fresh lookup means this
+            // also fixes already-assigned slots from before this change, no config migration needed.
+            String label = sc.displayName;
+            if (type == RadialActionType.EMOTE) {
+                EmoteData data = EmoteLibrary.byId(sc.action);
+                if (data != null) label = EmoteNameFormatter.shorten(data.name);
+            }
             slots.add(new RadialSlot(type, sc.action, sc.iconType, sc.iconValue,
-                    sc.displayName, "ON_RELEASE".equals(sc.trigger)));
+                    label, "ON_RELEASE".equals(sc.trigger)));
         }
     }
 }

@@ -1,7 +1,7 @@
 package dev.steampad.radial;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 
 /**
  * Renders the radial menu overlay on top of the game.
@@ -11,12 +11,12 @@ public final class RadialMenuOverlay {
 
     private RadialMenuOverlay() {}
 
-    public static void render(DrawContext context, float tickDelta) {
+    public static void render(GuiGraphics context, float tickDelta) {
         if (!RadialMenuController.isOpen()) return;
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        int screenW = mc.getWindow().getScaledWidth();
-        int screenH = mc.getWindow().getScaledHeight();
+        Minecraft mc = Minecraft.getInstance();
+        int screenW = mc.getWindow().getGuiScaledWidth();
+        int screenH = mc.getWindow().getGuiScaledHeight();
 
         RadialRenderer.render(context, screenW / 2, screenH / 2,
                 RadialMenuController.getSlots(),

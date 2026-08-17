@@ -1,4 +1,11 @@
 # SteamPad — curated SDL gamepad mappings (focused on 8BitDo).
+#
+# THIRD-PARTY NOTICE: the mapping lines below are sourced from the SDL_GameControllerDB project
+#   https://github.com/mdqinc/SDL_GameControllerDB — zlib License, Copyright (c) the
+#   SDL_GameControllerDB contributors. Reproduced here under the zlib License's redistribution
+#   terms (origin not misrepresented, this notice kept with the data). See CREDITS.md for the
+#   full project-level third-party notice.
+#
 # Format: SDL GameControllerDB (GUID,Name,mappings,platform:Linux,)
 # Only entries whose controller GUID matches a connected device take effect; the rest are ignored.
 # To add YOUR device, drop a full gamecontrollerdb.txt (or a single line) at:

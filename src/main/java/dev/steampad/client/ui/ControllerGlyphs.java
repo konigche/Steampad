@@ -1,11 +1,11 @@
 package dev.steampad.client.ui;
 
 import dev.steampad.steam.SteamControllerHandleRef.ControllerType;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import dev.steampad.compat.mc.RenderCompat;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * Draws controller button glyphs that match the controller family — Xbox-style colored ABXY discs,
@@ -42,18 +42,17 @@ public final class ControllerGlyphs {
      * ({@code GameplayHudOverlay}) actually use. Vector fallback icons only get the nudge. The Y-nudge
      * never changes the returned width, so a press can never shift the rest of the HUD row.
      */
-    public static int draw(DrawContext ctx, TextRenderer tr, int x, int y, int size, ControllerType type, String button) {
+    public static int draw(GuiGraphics ctx, Font tr, int x, int y, int size, ControllerType type, String button) {
         boolean pressed = dev.steampad.input.GamepadInputDispatcher.isPhysicallyHeld(button);
         int dy = pressed ? y + 1 : y;
         return drawGlyph(ctx, tr, x, dy, size, type, button, pressed);
     }
 
-    private static int drawGlyph(DrawContext ctx, TextRenderer tr, int x, int y, int size, ControllerType type, String button, boolean pressed) {
+    private static int drawGlyph(GuiGraphics ctx, Font tr, int x, int y, int size, ControllerType type, String button, boolean pressed) {
         // Prefer the connected controller's brand PNG; fall back to the vector glyphs below.
-        Identifier tex = ButtonTextureManager.resolveButton(button);
+        ResourceLocation tex = ButtonTextureManager.resolveButton(button);
         if (tex != null) {
-            ctx.drawTexture(RenderPipelines.GUI_TEXTURED, tex, x, y, 0f, 0f, size, size,
-                    ButtonTextureManager.TEX, ButtonTextureManager.TEX,
+            RenderCompat.blitTextureTinted(ctx, tex, x, y, size, size,
                     ButtonTextureManager.TEX, ButtonTextureManager.TEX,
                     pressed ? TINT_PRESSED : TINT_NORMAL);
             return size;
@@ -65,15 +64,15 @@ public final class ControllerGlyphs {
     }
 
     /** Width the glyph for {@code button} will consume at the given size (without drawing). */
-    public static int width(TextRenderer tr, int size, String button) {
+    public static int width(Font tr, int size, String button) {
         if (ButtonTextureManager.resolveButton(button) != null) return size;   // brand PNGs are square
         return switch (button) {
             case "A", "B", "X", "Y" -> size;
-            default -> Math.max(size + 6, tr.getWidth(button) + 8);
+            default -> Math.max(size + 6, tr.width(button) + 8);
         };
     }
 
-    private static void drawFace(DrawContext ctx, TextRenderer tr, int x, int y, int size, ControllerType type, String b) {
+    private static void drawFace(GuiGraphics ctx, Font tr, int x, int y, int size, ControllerType type, String b) {
         int cx = x + size / 2;
         int cy = y + size / 2;
         int r = size / 2 - 1;
@@ -105,20 +104,20 @@ public final class ControllerGlyphs {
         }
         Draw.fillCircle(ctx, cx, cy, r, color);
         Draw.outlineCircle(ctx, cx, cy, r, 1, 0x55000000);
-        int tw = tr.getWidth(b);
-        ctx.drawText(tr, Text.literal(b), cx - tw / 2, cy - 4, 0xFFFFFFFF, false);
+        int tw = tr.width(b);
+        ctx.drawString(tr, Component.literal(b), cx - tw / 2, cy - 4, 0xFFFFFFFF, false);
     }
 
-    private static int drawChip(DrawContext ctx, TextRenderer tr, int x, int y, int size, String label) {
-        int w = Math.max(size + 6, tr.getWidth(label) + 8);
+    private static int drawChip(GuiGraphics ctx, Font tr, int x, int y, int size, String label) {
+        int w = Math.max(size + 6, tr.width(label) + 8);
         Draw.fillRoundRect(ctx, x, y, x + w, y + size, 3, CHIP_BG);
         // accent border
         ctx.fill(x, y, x + w, y + 1, CHIP_BORDER);
         ctx.fill(x, y + size - 1, x + w, y + size, CHIP_BORDER);
         ctx.fill(x, y, x + 1, y + size, CHIP_BORDER);
         ctx.fill(x + w - 1, y, x + w, y + size, CHIP_BORDER);
-        int tw = tr.getWidth(label);
-        ctx.drawText(tr, Text.literal(label), x + (w - tw) / 2, y + (size - 8) / 2, 0xFFFFFFFF, false);
+        int tw = tr.width(label);
+        ctx.drawString(tr, Component.literal(label), x + (w - tw) / 2, y + (size - 8) / 2, 0xFFFFFFFF, false);
         return w;
     }
 }

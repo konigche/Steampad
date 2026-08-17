@@ -1,6 +1,6 @@
 package dev.steampad.mixin;
 
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -8,13 +8,13 @@ import org.spongepowered.asm.mixin.gen.Accessor;
  * Exposes the top-left origin of a container screen so the virtual cursor can compute slot centers
  * for soft "snap-to-slot" magnetism (Bedrock-style inventory navigation).
  */
-@Mixin(HandledScreen.class)
+@Mixin(AbstractContainerScreen.class)
 public interface HandledScreenAccessor {
 
-    @Accessor("x")
+    @Accessor("leftPos")
     int steampad$getX();
 
-    @Accessor("y")
+    @Accessor("topPos")
     int steampad$getY();
 
     // GUI panel size — with x/y this gives the container's screen rect, used to decide whether a
@@ -23,9 +23,9 @@ public interface HandledScreenAccessor {
     // inButton() subtracts getGuiLeft()/getGuiTop() before hit-testing). Field names verified with
     // javap against the mapped 1.21.10 jar: backgroundWidth / backgroundHeight.
 
-    @Accessor("backgroundWidth")
+    @Accessor("imageWidth")
     int steampad$getBackgroundWidth();
 
-    @Accessor("backgroundHeight")
+    @Accessor("imageHeight")
     int steampad$getBackgroundHeight();
 }

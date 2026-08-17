@@ -31,8 +31,36 @@ public final class ControllerConfig {
     public boolean attackAutoRepeat = true;
     public SneakMode sneakMode = SneakMode.HOLD;
     public SprintMode sprintMode = SprintMode.HOLD;
+    // Item Radial (LB/RB) — see dev.steampad.itemradial. OFF: LB/RB keep today's classic hotbar-scroll
+    // tap behaviour, untouched. HOLD_TO_OPEN: a quick tap still scrolls one slot; holding past the
+    // threshold opens the wheel instead — best of both, no toggle needed to switch back and forth.
+    // ALWAYS_RADIAL: every press opens the wheel directly, classic scroll is fully replaced.
+    public HotbarRadialMode hotbarRadialMode = HotbarRadialMode.OFF;
     public boolean autoJump = true;
     public boolean noFlyDrifting = false;
+    // Both of the next two apply ONLY while mounted in a vehicle/mount (feedback: "cuando monto un
+    // coche o helicoptero... siento muy sensible el stick izquierdo, como que esta temblando", vs a
+    // rock-solid keyboard W). On foot, vanilla's own movement acceleration/friction already absorbs
+    // small stick deviations, but a modded vehicle typically applies the analog value straight to its
+    // own turn rate with no inertia of its own, so both hand tremor AND a thumb resting a few degrees
+    // off-axis become visible steering wobble.
+    //
+    // TIME filter (halflife in seconds, same semantics as util.SmoothValue, already used for the
+    // camera): absorbs genuine tremor — deviations that come and go. 0 = off.
+    public float mountedSteeringSmoothing = 0.08f;
+    // AXIS dead band on the LATERAL axis only (0 = off). This is the one that fixes "si empujo el stick
+    // izq al frente siempre se va de lado... nunca va solo adelante como cuando presiono solo W".
+    // leftStickDeadzone above is CIRCULAR: it only zeroes the stick near its CENTRE and above that
+    // preserves the vector's ANGLE exactly, so there is no dead band around the forward AXIS. A
+    // keyboard's lateral impulse is only ever exactly -1, 0 or +1 (hence W drives dead straight), but
+    // an analog stick essentially never reads exactly zero, and a vehicle turning proportionally to
+    // that value integrates the residue into a permanent slow curve. Confirmed in the user's own debug
+    // dump while mounted: movement input (-0.01, 1.00) — a lateral 100x smaller than forward and still
+    // enough to never drive straight. Attenuating it (the power curve this replaces, v0.92.0) was not
+    // enough: inside the band it has to be EXACTLY zero. Above the band the response stays linear, so
+    // turning while driving forward keeps working exactly like holding W+D on the keyboard.
+    // Forward/back deliberately has no such band: it is the throttle and must stay proportional.
+    public float mountedSteeringDeadzone = 0.25f;
     public boolean lceStyleControls = false;
 
     // Accessibility
@@ -80,7 +108,10 @@ public final class ControllerConfig {
     public float zoomSmoothing = 0.15f;        // easing factor 0.05..0.30 (higher = snappier)
     public boolean zoomAutoSensitivity = true; // camera speed follows the zoom factor
     public float zoomSensitivity = 0.3f;       // fixed camera multiplier while zoomed (auto off)
-    public boolean zoomDpadAdjust = true;      // D-pad ↑/↓ adjusts the level while zoomed
+    public boolean zoomDpadAdjust = true;      // the Zoom in/out binds adjust the level while zoomed
+    // Ramp the level continuously while the in/out button is held, instead of one discrete step per
+    // press. OFF keeps the original stepped feel, which is what every existing config expects.
+    public boolean zoomContinuous = false;
     public boolean zoomResetOnRelease = false; // true = D-pad adjustments discard on zoom end (back to
                                                // the configured level); false = the last level persists
     public boolean zoomMarkerEnabled = true;   // A while zoomed drops a temporary particle beacon
@@ -100,6 +131,12 @@ public final class ControllerConfig {
     // ZoomController.renderCinematicBars), independent of how deep the configured zoom FOV is.
     public boolean zoomCinematicBars = false;
     public float zoomCinematicBarsHeightPct = 12f;   // 5..20% of screen height per bar
+    // Shooter-style zoom: eases to first person while zooming, eases back to third on release — the
+    // same 220ms blend PerspectiveTransition already uses for emotes and the manual perspective
+    // cycle. Restricted to back-view (see ZoomController) — front-view/mirror mode keeps its own
+    // identity, no switch there. Shipped off, then turned ON by default at the requester's own call
+    // once they'd seen it: aiming down a zoom from behind the character is the case it exists for.
+    public boolean zoomFirstPerson = true;
 
     // Advanced
     public boolean mixedInput = false;
@@ -122,9 +159,23 @@ public final class ControllerConfig {
     // extra bind only fires while this modifier is also held (mirrors chordBindings for BIND actions).
     public java.util.Map<String, String> extraChords = new java.util.HashMap<>();
 
+    // Per-CONTEXT ("layer") button bindings, so the same physical button can mean different things
+    // depending on where you are — the request: "cuando estoy en Mochila podría poner A para ordenar
+    // mochila y sigue funcionando sin interrumpir el A de saltar de gameplay". Outer key = layer name
+    // (SteamSlotDispatcher.Context: MENU / INVENTORY / MOUNTED), inner map = same shape as extraBinds
+    // (button id -> keybind translation key) and extraChords. GAMEPLAY is deliberately absent: it
+    // already lives in extraBinds/extraChords above and stays there, exactly like the Steam Input slot
+    // layers left their own Gameplay layer where it was. Everything reads these through
+    // dev.steampad.input.ContextualBinds, which hides the split.
+    // Buttons whose action fires on a LONG PRESS instead of on the press edge, so one button can
+    // carry two actions: a short tap does what it always did, a long hold does this one. Empty by
+    // default. See dev.steampad.input.LongPressGate for where a long press is refused and why.
+    public java.util.List<String> holdButtons = new java.util.ArrayList<>();
+
     // Enums
     public enum SneakMode { HOLD, TOGGLE }
     public enum SprintMode { HOLD, TOGGLE }
+    public enum HotbarRadialMode { OFF, HOLD_TO_OPEN, ALWAYS_RADIAL }
     public enum ButtonGuidePosition { TOP, BOTTOM }
     // Zoom marker beacon shapes — see input/ZoomController#tickMarker.
     public enum ZoomMarkerStyle { COLUMN, SHORT_COLUMN, RING, BURST }

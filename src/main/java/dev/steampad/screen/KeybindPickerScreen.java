@@ -1,17 +1,16 @@
 package dev.steampad.screen;
 
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Searchable list of every keybind (vanilla + mods) for picking a radial KEYBIND slot. Each row shows
@@ -23,10 +22,10 @@ public class KeybindPickerScreen extends SteamPadBaseScreen {
 
     private final Screen parent;
     private final Consumer<String> onSelect;
-    private TextFieldWidget search;
+    private EditBox search;
 
     public KeybindPickerScreen(Screen parent, Consumer<String> onSelect) {
-        super(Text.translatable("steampad.radial.pick_keybind"));
+        super(Component.translatable("steampad.radial.pick_keybind"));
         this.parent = parent;
         this.onSelect = onSelect;
     }
@@ -40,46 +39,46 @@ public class KeybindPickerScreen extends SteamPadBaseScreen {
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
-        search = new TextFieldWidget(this.textRenderer, x, HEADER_H + 8, w, 18,
-                Text.translatable("steampad.radial.search"));
-        search.setChangedListener(t -> rebuild());
-        addDrawableChild(search);
+        search = new EditBox(this.font, x, HEADER_H + 8, w, 18,
+                Component.translatable("steampad.radial.search"));
+        search.setResponder(t -> rebuild());
+        addRenderableWidget(search);
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
         rebuild();
     }
 
     private void rebuild() {
         // Rebuild the whole widget set from scratch (search + cancel + filtered rows).
-        this.clearChildren();
+        this.clearWidgets();
         resetScroll();
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
-        addDrawableChild(search);
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(search);
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
-        String q = search.getText().toLowerCase(Locale.ROOT).trim();
-        List<KeyBinding> matches = new ArrayList<>();
-        for (KeyBinding kb : client.options.allKeys) {
-            String name = Text.translatable(kb.getId()).getString().toLowerCase(Locale.ROOT);
-            if (q.isEmpty() || name.contains(q) || kb.getId().toLowerCase(Locale.ROOT).contains(q)) {
+        String q = search.getValue().toLowerCase(Locale.ROOT).trim();
+        List<KeyMapping> matches = new ArrayList<>();
+        for (KeyMapping kb : minecraft.options.keyMappings) {
+            String name = Component.translatable(kb.getName()).getString().toLowerCase(Locale.ROOT);
+            if (q.isEmpty() || name.contains(q) || kb.getName().toLowerCase(Locale.ROOT).contains(q)) {
                 matches.add(kb);
             }
         }
-        matches.sort((a, b) -> Text.translatable(a.getId()).getString()
-                .compareToIgnoreCase(Text.translatable(b.getId()).getString()));
+        matches.sort((a, b) -> Component.translatable(a.getName()).getString()
+                .compareToIgnoreCase(Component.translatable(b.getName()).getString()));
 
         int y = contentTop();
-        for (KeyBinding kb : matches) {
-            String id = kb.getId();
-            Text label = Text.translatable(id).copy()
-                    .append("  [").append(kb.getBoundKeyLocalizedText()).append("]");
-            ButtonWidget row = ButtonWidget.builder(label, b -> { onSelect.accept(id); close(); })
-                    .dimensions(x, y, w, 20).build();
+        for (KeyMapping kb : matches) {
+            String id = kb.getName();
+            Component label = Component.translatable(id).copy()
+                    .append("  [").append(kb.getTranslatedKeyMessage()).append("]");
+            Button row = Button.builder(label, b -> { onSelect.accept(id); onClose(); })
+                    .bounds(x, y, w, 20).build();
             addScroll(row, y);
             y += ROW_H;
         }
@@ -91,12 +90,12 @@ public class KeybindPickerScreen extends SteamPadBaseScreen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderScrollbar(ctx, (this.width + Math.min(360, this.width - 40)) / 2 + 4);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

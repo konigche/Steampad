@@ -37,11 +37,31 @@ import java.util.Map;
  */
 public final class EmoteData {
 
-    /** Body parts, named as in the community format ("torso"/"body" both mean vanilla "body"). */
-    public enum Part { HEAD, TORSO, RIGHT_ARM, LEFT_ARM, RIGHT_LEG, LEFT_LEG }
+    /**
+     * Animated channels.
+     *
+     * <p><b>{@link #BODY} is NOT a bone</b> — it is the WHOLE-MODEL transform, applied to the render
+     * matrix stack for the entire player (position in BLOCK units, rotation, scale), exactly as the
+     * real reference does in {@code PlayerRendererMixin.applyBodyTransforms} (D110). This is what
+     * actually lowers a player onto the floor for a sitting emote, or tips the whole body horizontal
+     * for a crawl — none of which a torso-bone rotation can ever do. {@link #TORSO} remains the body
+     * BONE (model units), posed like any other bone.
+     *
+     * <p>Every other value is a real {@code ModelPart} bone. The two were merged into one part until
+     * v0.70.0, which is why "sitting" emotes floated in the air: the whole-model channel was being
+     * applied as a torso-bone rotation instead.
+     */
+    public enum Part { HEAD, TORSO, BODY, RIGHT_ARM, LEFT_ARM, RIGHT_LEG, LEFT_LEG }
 
-    /** Channels per part. X/Y/Z are absolute pivot coords (model units); PITCH/YAW/ROLL radians. */
-    public enum Axis { X, Y, Z, PITCH, YAW, ROLL }
+    /** Channels per part. X/Y/Z are absolute pivot coords (model units); PITCH/YAW/ROLL radians.
+     *  BEND_DIRECTION/BEND_AMOUNT (D103, v0.63.0) are Emotecraft's {@code bendDir}/{@code bend} —
+     *  the mid-cuboid flex used for sitting/crouching poses, sampled through this exact same
+     *  channel/keyframe pipeline as any rotation axis (verified against the real reference: its own
+     *  {@code AnimationJson} feeds them into the SAME {@code StateCollection.State} type as x/y/z/
+     *  pitch/yaw/roll) and applied by {@link dev.steampad.emote.bend.CuboidBender} instead of a plain
+     *  {@code ModelPart} field. Never populated for {@link Part#HEAD} (not bendable, matches the
+     *  reference's own per-part registration). */
+    public enum Axis { X, Y, Z, PITCH, YAW, ROLL, BEND_DIRECTION, BEND_AMOUNT }
 
     /** One keyframe: value at a tick, its easing curve and optional easing argument. Per the real
      *  semantics the easing describes the travel FROM the earlier frame to the later one, read from
@@ -68,9 +88,20 @@ public final class EmoteData {
      * matches both sources and stays unchanged.
      */
     public static float defaultValue(Part part, Axis axis) {
-        if (axis == Axis.PITCH || axis == Axis.YAW || axis == Axis.ROLL) return 0f;
+        // BEND_DIRECTION/BEND_AMOUNT must land here too — EmoteAnimator.applyBend()'s own comment
+        // already states 0f is "the axis's own default", but this guard used to only cover
+        // PITCH/YAW/ROLL, so a bend axis fell into the switch below and inherited RIGHT_LEG/LEFT_LEG's
+        // Z-position default (0.1f) instead. Silent on arms/torso/head (their Z-ish default is
+        // already 0f), but on legs it corrupted the Debug Dump's displayed default AND the real
+        // ease-in value sampleAxis's findBefore/findAfter fall back to for a leg whose bend channel
+        // is enabled but hasn't reached its first keyframe yet (D107 — found by numerically
+        // cross-checking against the real MIT reference's KeyframeAnimationPlayer, not by inspection).
+        if (axis == Axis.PITCH || axis == Axis.YAW || axis == Axis.ROLL
+                || axis == Axis.BEND_DIRECTION || axis == Axis.BEND_AMOUNT) return 0f;
         return switch (part) {
-            case HEAD, TORSO -> 0f;
+            // BODY (whole-model transform) rests at the identity — the reference's own body
+            // StateCollection is constructed with all-zero position/rotation defaults (D110).
+            case HEAD, TORSO, BODY -> 0f;
             case RIGHT_ARM -> axis == Axis.X ? -5f : axis == Axis.Y ? 2f : 0f;
             case LEFT_ARM  -> axis == Axis.X ?  5f : axis == Axis.Y ? 2f : 0f;
             case RIGHT_LEG -> axis == Axis.X ? -1.9f : axis == Axis.Y ? 12f : 0.1f;
@@ -95,6 +126,15 @@ public final class EmoteData {
     /** Raw PNG bytes for this emote's own icon, or null (falls back to a generic glyph). Set by the
      *  loader after construction (sibling {@code <id>.png} or the binary container's embedded PNG). */
     public byte[] iconPng;
+
+    /** True when the source file declares real {@code bend}/{@code bendDir} data on any bendable
+     *  part (body/arms/legs) — the mid-cuboid flex Emotecraft/playerAnimator use to split a limb
+     *  into two rotatable halves. Since v0.64.0/D104, this IS rendered (own port of KosmX/bendy-lib,
+     *  {@link dev.steampad.emote.bend.CuboidBender}, wired through {@link EmoteAnimator}'s
+     *  {@code applyBend}) — a real pivot bug in that renderer was found and fixed in v0.65.0/D105. Set
+     *  by the parsers; surfaced in the Library/Debug Dump so a specific emote can be identified as
+     *  bend-dependent when diagnosing how it looks. */
+    public boolean usesBend = false;
 
     /** One channel: explicit enabled flag + sorted keyframes. Enabled with zero keyframes is a
      *  meaningful state (the axis is pinned to its default for the emote's whole active window). */
@@ -182,7 +222,8 @@ public final class EmoteData {
         Channel c = m == null ? null : m.get(axis);
         if (c == null || !c.enabled) return currentValue;
 
-        boolean isAngle = axis == Axis.PITCH || axis == Axis.YAW || axis == Axis.ROLL;
+        boolean isAngle = axis == Axis.PITCH || axis == Axis.YAW || axis == Axis.ROLL
+                || axis == Axis.BEND_DIRECTION || axis == Axis.BEND_AMOUNT;
         if (isAngle) currentValue = clampToRadian(currentValue);
 
         int currentTick = (int) Math.floor(t);

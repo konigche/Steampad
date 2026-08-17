@@ -4,9 +4,9 @@ import dev.steampad.config.ConfigManager;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.GameMenuScreen;
-import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.Screen;
 
 /**
  * Gatekeeper for the pause menu while playing with a controller.
@@ -32,10 +32,10 @@ public final class PauseGate {
     private PauseGate() {}
 
     /** Every SteamPad path that opens the pause menu goes through here — never suppressed. */
-    public static void openPauseMenu(MinecraftClient mc) {
+    public static void openPauseMenu(Minecraft mc) {
         steamPadInitiated = true;
         try {
-            mc.setScreen(new GameMenuScreen(true));
+            mc.setScreen(new PauseScreen(true));
         } finally {
             steamPadInitiated = false;
         }
@@ -47,9 +47,9 @@ public final class PauseGate {
      * initiated by SteamPad.
      */
     public static boolean shouldSuppress(Screen screen) {
-        if (!(screen instanceof GameMenuScreen)) return false;
+        if (!(screen instanceof PauseScreen)) return false;
         if (steamPadInitiated) return false;
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.player == null) return false;
         // A screen is already open → this open CANNOT be the spurious focus-pause: vanilla's
         // openGameMenu starts with "if (currentScreen != null) return;" (verified in the 1.21.10
@@ -58,8 +58,8 @@ public final class PauseGate {
         // Suppressing those jammed the whole B-close chain while the window was unfocused: the
         // hop back to the pause menu got cancelled, currentScreen stayed on the child, and the
         // player could never reach gameplay again without refocusing with the physical mouse.
-        if (mc.currentScreen != null) return false;
-        if (mc.isWindowFocused()) return false;
+        if (mc.screen != null) return false;
+        if (mc.isWindowActive()) return false;
         long handle = ActiveControllerService.getActiveHandle();
         if (handle == 0L || !ControllerManager.isFallbackHandle(handle)) return false;
         if (!originLogged) {

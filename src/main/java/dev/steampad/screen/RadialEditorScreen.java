@@ -6,17 +6,16 @@ import dev.steampad.radial.RadialActionType;
 import dev.steampad.radial.RadialRenderer;
 import dev.steampad.radial.RadialSlot;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.CyclingButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Visual editor for the radial menu (up to 12 slots). Pick the slot count, pick a slot, then set its
@@ -26,6 +25,13 @@ import java.util.List;
  */
 public class RadialEditorScreen extends SteamPadBaseScreen {
 
+    // Fixed pixel geometry of the left (editor) column — NOT a fraction of screen width, so the
+    // scrollbar (anchored off these, see listRightX()) stays right next to the settings instead of
+    // drifting into the preview wheel on wider screens (bug: scrollbar rendered at this.width*3/4,
+    // which only matched the column's right edge by coincidence on narrow/default window sizes).
+    private static final int COL_X = 14;
+    private static final int COL_W = 200;
+
     private final Screen parent;
     private final long handle;
     private RadialConfig cfg;
@@ -33,13 +39,13 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
     /** Which wheel is being edited (0-based page, E10). */
     private int page;
 
-    private record Label(int y, Text text) {}
+    private record Label(int y, Component text) {}
     private final List<Label> labels = new ArrayList<>();
 
     public RadialEditorScreen(Screen parent, long handle) { this(parent, handle, 0); }
 
     public RadialEditorScreen(Screen parent, long handle, int initialSlot) {
-        super(Text.translatable("steampad.screen.radial_editor.title"));
+        super(Component.translatable("steampad.screen.radial_editor.title"));
         this.parent = parent;
         this.handle = handle;
         this.selected = Math.max(0, initialSlot);
@@ -50,63 +56,66 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
     @Override
     protected void init() {
         super.init();
+        resetScroll();
         labels.clear();
         this.cfg = ConfigManager.getRadialConfig(handle);
         cfg.normalize();
         if (page >= cfg.wheelCount()) page = cfg.wheelCount() - 1;
         if (selected >= cfg.slotCountFor(page)) selected = cfg.slotCountFor(page) - 1;
 
-        int colX = 14, colW = 200;
-        int y = HEADER_H + 8;
+        int colX = COL_X, colW = COL_W;
+        int y = contentTop();
 
         // Row 1 — WHEEL management only (E10), clearly labeled: which wheel is being edited
         // ("Rueda 1/3"), ◀/▶ to switch, ＋ to add one, ✕ to remove this one. Slot count lives in
         // its own labeled row below — mixing both in one row read as "add a wheel? add a slot?".
         int wheels = cfg.wheelCount();
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.wheel")
-                .copy().append(Text.literal("  " + (page + 1) + "/" + wheels))));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.wheel")
+                .copy().append(Component.literal("  " + (page + 1) + "/" + wheels))));
         y += 10;
-        ButtonWidget prevW = ButtonWidget.builder(Text.literal("◀"), b -> switchWheel(-1))
-                .dimensions(colX, y, 44, 18)
-                .tooltip(Tooltip.of(Text.translatable("steampad.radial.wheel.desc"))).build();
+        Button prevW = Button.builder(Component.literal("◀"), b -> switchWheel(-1))
+                .bounds(colX, y, 44, 18)
+                .tooltip(Tooltip.create(Component.translatable("steampad.radial.wheel.desc"))).build();
         prevW.active = wheels > 1;
-        addDrawableChild(prevW);
-        ButtonWidget nextW = ButtonWidget.builder(Text.literal("▶"), b -> switchWheel(+1))
-                .dimensions(colX + 48, y, 44, 18)
-                .tooltip(Tooltip.of(Text.translatable("steampad.radial.wheel.desc"))).build();
+        addScroll(prevW, y);
+        Button nextW = Button.builder(Component.literal("▶"), b -> switchWheel(+1))
+                .bounds(colX + 48, y, 44, 18)
+                .tooltip(Tooltip.create(Component.translatable("steampad.radial.wheel.desc"))).build();
         nextW.active = wheels > 1;
-        addDrawableChild(nextW);
-        ButtonWidget addW = ButtonWidget.builder(Text.translatable("steampad.radial.wheel.add_short"), b -> addWheel())
-                .dimensions(colX + colW - 104, y, 50, 18)
-                .tooltip(Tooltip.of(Text.translatable("steampad.radial.wheel.add"))).build();
-        addW.active = wheels < RadialConfig.MAX_WHEELS;
-        addDrawableChild(addW);
-        ButtonWidget delW = ButtonWidget.builder(Text.translatable("steampad.radial.wheel.remove_short"), b -> openDeleteWheelPicker())
-                .dimensions(colX + colW - 50, y, 50, 18)
-                .tooltip(Tooltip.of(Text.translatable("steampad.radial.wheel.remove"))).build();
+        addScroll(nextW, y);
+        // Right = add (+), left of the pair = remove (−) — D111: "derecha es más y quitar es izquierda".
+        Button delW = Button.builder(Component.translatable("steampad.radial.wheel.remove_short"), b -> openDeleteWheelPicker())
+                .bounds(colX + colW - 104, y, 50, 18)
+                .tooltip(Tooltip.create(Component.translatable("steampad.radial.wheel.remove"))).build();
         delW.active = wheels > 1;
-        addDrawableChild(delW);
+        addScroll(delW, y);
+        Button addW = Button.builder(Component.translatable("steampad.radial.wheel.add_short"), b -> addWheel())
+                .bounds(colX + colW - 50, y, 50, 18)
+                .tooltip(Tooltip.create(Component.translatable("steampad.radial.wheel.add"))).build();
+        addW.active = wheels < RadialConfig.MAX_WHEELS;
+        addScroll(addW, y);
         y += 22;
 
         // Row 2 — SLOT COUNT of this wheel, its own labeled row ("Espacios: N", − / +).
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.slot_count", cfg.slotCountFor(page))));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.slot_count", cfg.slotCountFor(page))));
         y += 10;
-        addDrawableChild(ButtonWidget.builder(Text.literal("−"), b -> changeSlotCount(-1))
-                .dimensions(colX, y, 44, 18).build());
-        addDrawableChild(ButtonWidget.builder(Text.literal("+"), b -> changeSlotCount(+1))
-                .dimensions(colX + 48, y, 44, 18).build());
+        addScroll(Button.builder(Component.literal("−"), b -> changeSlotCount(-1))
+                .bounds(colX, y, 44, 18).build(), y);
+        addScroll(Button.builder(Component.literal("+"), b -> changeSlotCount(+1))
+                .bounds(colX + 48, y, 44, 18).build(), y);
         y += 22;
 
         // Slot picker (rows of 6).
         for (int i = 0; i < cfg.slotCountFor(page); i++) {
             final int idx = i;
-            ButtonWidget b = ButtonWidget.builder(Text.literal(String.valueOf(i + 1)), btn -> {
+            int rowY = y + (i / 6) * 20;
+            Button b = Button.builder(Component.literal(String.valueOf(i + 1)), btn -> {
                 UiSoundService.playNavigate();
                 selected = idx;
-                clearAndInit();
-            }).dimensions(colX + (i % 6) * 33, y + (i / 6) * 20, 30, 18).build();
+                rebuildWidgets();
+            }).bounds(colX + (i % 6) * 33, rowY, 30, 18).build();
             if (i == selected) b.active = false;
-            addDrawableChild(b);
+            addScroll(b, rowY);
         }
         y += ((cfg.slotCountFor(page) + 5) / 6) * 20 + 4;
 
@@ -114,100 +123,138 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
         RadialActionType type = parseType(slot.type);
 
         // Type.
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.type")));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.type")));
         y += 10;
-        addDrawableChild(CyclingButtonWidget.<RadialActionType>builder(
-                v -> Text.translatable("steampad.radial.type." + v.name().toLowerCase()))
-                .values(RadialActionType.values())
-                .initially(type)
+        addScroll(CycleButton.<RadialActionType>builder(
+                v -> Component.translatable("steampad.radial.type." + v.name().toLowerCase()))
+                // ITEM is internal-only (dev.steampad.itemradial's dynamic wheels) — never a real
+                // user-configurable slot type, so it's excluded from this picker entirely.
+                // EMOTE belongs to the DEDICATED Emote Wheel only (EmoteWheelScreen.assignAndPersist,
+                // which opens the Emote Library picker to fill slot.action with a real emote id).
+                // This generic editor has no such picker wired into addValueWidget below, so picking
+                // EMOTE here left slot.action permanently empty — a dead end with no way to ever
+                // choose WHICH emote (reported: "no debería ser elegible en esta rueda"). Excluded the
+                // same way ITEM already is; a slot some other path already set to EMOTE (there isn't
+                // one today, since only EmoteWheelScreen ever writes it, and that screen has its own
+                // separate config list — see RadialConfig.emoteWheels vs .wheels) would still render
+                // and function correctly, it just can't be CHOSEN from this dropdown.
+                .withValues(java.util.Arrays.stream(RadialActionType.values())
+                        .filter(t -> t != RadialActionType.ITEM && t != RadialActionType.EMOTE)
+                        .toArray(RadialActionType[]::new))
+                .withInitialValue(type)
                 // omitKeyText → the control shows ONLY the type name ("Comando"), not "Tipo: Comando"
                 // (the "Tipo" label is already drawn above). Per-type tooltip describes what it does,
                 // shown on hover (mouse) and on focus (D-pad).
-                .omitKeyText()
-                .tooltip(v -> Tooltip.of(Text.translatable("steampad.radial.type." + v.name().toLowerCase() + ".desc")))
-                .build(colX, y, colW, 18, Text.translatable("steampad.radial.type"),
-                        (btn, v) -> { slot.type = v.name(); slot.action = ""; save(); clearAndInit(); }));
+                .displayOnlyValue()
+                .withTooltip(v -> Tooltip.create(Component.translatable("steampad.radial.type." + v.name().toLowerCase() + ".desc")))
+                .create(colX, y, colW, 18, Component.translatable("steampad.radial.type"),
+                        (btn, v) -> { slot.type = v.name(); slot.action = ""; save(); rebuildWidgets(); }), y);
         y += 22;
 
         // Name.
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.label")));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.label")));
         y += 10;
-        TextFieldWidget name = new TextFieldWidget(this.textRenderer, colX, y, colW, 18,
-                Text.translatable("steampad.radial.label"));
+        EditBox name = new EditBox(this.font, colX, y, colW, 18,
+                Component.translatable("steampad.radial.label"));
         name.setMaxLength(48);
-        name.setText(slot.displayName);
-        name.setChangedListener(t -> { slot.displayName = t; save(); });
-        addDrawableChild(name);
+        name.setValue(slot.displayName);
+        name.setResponder(t -> { slot.displayName = t; save(); });
+        addScroll(name, y);
         y += 22;
 
         // Value — context-aware per type.
         y = addValueWidget(colX, colW, y, slot, type);
 
         // Icon picker (opens the full Minecraft item list).
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.icon")));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.icon")));
         y += 10;
         String iconLabel = slot.iconValue.isBlank()
-                ? Text.translatable("steampad.radial.icon_pick").getString()
+                ? Component.translatable("steampad.radial.icon_pick").getString()
                 : slot.iconValue;
-        addDrawableChild(ButtonWidget.builder(Text.literal(iconLabel), btn ->
-                client.setScreen(new IconPickerScreen(this, id -> {
+        addScroll(Button.builder(Component.literal(iconLabel), btn ->
+                minecraft.setScreen(new IconPickerScreen(this, id -> {
                     slot.iconValue = id;
                     slot.iconType = "ITEM";
                     save();
-                }))).dimensions(colX, y, colW - 44, 18).build());
-        addDrawableChild(ButtonWidget.builder(Text.literal("✕"), btn -> {
-            slot.iconValue = ""; slot.iconType = "NONE"; save(); clearAndInit();
-        }).dimensions(colX + colW - 40, y, 40, 18).build());
+                }))).bounds(colX, y, colW - 44, 18).build(), y);
+        addScroll(Button.builder(Component.literal("✕"), btn -> {
+            slot.iconValue = ""; slot.iconType = "NONE"; save(); rebuildWidgets();
+        }).bounds(colX + colW - 40, y, 40, 18).build(), y);
         y += 22;
 
         // Trigger.
-        labels.add(new Label(y - 1, Text.translatable("steampad.radial.trigger")));
+        labels.add(new Label(y - 1, Component.translatable("steampad.radial.trigger")));
         y += 10;
-        addDrawableChild(CyclingButtonWidget.<Boolean>builder(
-                v -> Text.translatable(v ? "steampad.radial.trigger.on_release" : "steampad.radial.trigger.on_click"))
-                .values(Boolean.TRUE, Boolean.FALSE)
-                .initially("ON_RELEASE".equals(slot.trigger))
-                .build(colX, y, colW, 18, Text.translatable("steampad.radial.trigger"),
-                        (btn, v) -> { slot.trigger = v ? "ON_RELEASE" : "ON_CLICK"; save(); }));
+        addScroll(CycleButton.<Boolean>builder(
+                v -> Component.translatable(v ? "steampad.radial.trigger.on_release" : "steampad.radial.trigger.on_click"))
+                .withValues(Boolean.TRUE, Boolean.FALSE)
+                .withInitialValue("ON_RELEASE".equals(slot.trigger))
+                .create(colX, y, colW, 18, Component.translatable("steampad.radial.trigger"),
+                        (btn, v) -> { slot.trigger = v ? "ON_RELEASE" : "ON_CLICK"; save(); }), y);
+        y += 22;
+        finishScroll(y);
 
-        // Footer: Appearance (theme/size/backdrop live in their own screen) + Done.
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.radial.style"), btn -> {
+        // Footer: Appearance (theme/size/backdrop live in their own screen) + Done — fixed, never
+        // scrolls (feedback: "no tienes puesto una barra de scroll... en pantallas pequeñas no puedo
+        // bajar para ver todas las opciones" — everything above now scrolls as one column).
+        addRenderableWidget(Button.builder(Component.translatable("steampad.radial.style"), btn -> {
             UiSoundService.playNavigate();
-            client.setScreen(new RadialStyleScreen(this, handle));
-        }).dimensions(this.width / 2 - 115, this.height - FOOTER_H + 7, 110, 20).build());
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.DONE, btn -> {
+            minecraft.setScreen(new RadialStyleScreen(this, handle));
+        }).bounds(this.width / 2 - 115, this.height - FOOTER_H + 7, 110, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, btn -> {
             UiSoundService.playSelect();
             ConfigManager.saveRadialConfig(handle);
-            close();
-        }).dimensions(this.width / 2 + 5, this.height - FOOTER_H + 7, 110, 20).build());
+            onClose();
+        }).bounds(this.width / 2 + 5, this.height - FOOTER_H + 7, 110, 20).build());
     }
 
     /** Adds the value editor appropriate to the slot's type (the picker/field changes with the type). */
     private int addValueWidget(int colX, int colW, int y, RadialConfig.SlotConfig slot, RadialActionType type) {
         switch (type) {
             case KEYBIND, MALILIB_KEYBIND -> {
-                labels.add(new Label(y - 1, Text.translatable("steampad.radial.value.keybind")));
+                labels.add(new Label(y - 1, Component.translatable("steampad.radial.value.keybind")));
                 y += 10;
                 String cur = slot.action.isBlank()
-                        ? Text.translatable("steampad.radial.value.pick").getString() : slot.action;
-                addDrawableChild(ButtonWidget.builder(Text.literal(cur), btn ->
-                        client.setScreen(new KeybindPickerScreen(this, id -> {
+                        ? Component.translatable("steampad.radial.value.pick").getString() : slot.action;
+                addScroll(Button.builder(Component.literal(cur), btn ->
+                        minecraft.setScreen(new KeybindPickerScreen(this, id -> {
                             slot.action = id; save();
-                        }))).dimensions(colX, y, colW, 18).build());
+                        }))).bounds(colX, y, colW, 18).build(), y);
                 y += 22;
             }
             case CHAT_COMMAND -> {
-                labels.add(new Label(y - 1, Text.translatable("steampad.radial.value.command")));
+                labels.add(new Label(y - 1, Component.translatable("steampad.radial.value.command")));
                 y += 10;
                 y = addTextValue(colX, colW, y, slot);
             }
+            case SMART_COMMAND -> {
+                // Same shape as KEYBIND: a picker, not a free-text field — the value is one of a fixed
+                // set of ids (see SmartCommand), so typing it by hand could only ever be a typo.
+                labels.add(new Label(y - 1, Component.translatable("steampad.radial.value.smartcmd")));
+                y += 10;
+                dev.steampad.radial.SmartCommand cur = dev.steampad.radial.SmartCommand.byId(slot.action);
+                Component label = cur != null ? cur.label()
+                        : Component.translatable("steampad.radial.value.pick");
+                addScroll(Button.builder(label, btn ->
+                        minecraft.setScreen(new SmartCommandPickerScreen(this, id -> {
+                            slot.action = id;
+                            // Give a fresh slot a sensible name straight away, the way the wheel shows
+                            // it — otherwise a slot picked here draws blank until the user types one.
+                            var picked = dev.steampad.radial.SmartCommand.byId(id);
+                            if (slot.displayName.isBlank() && picked != null) {
+                                slot.displayName = picked.label().getString();
+                            }
+                            save();
+                        }))).bounds(colX, y, colW, 18).build(), y);
+                y += 22;
+            }
             case SCREEN_SHORTCUT -> {
-                labels.add(new Label(y - 1, Text.translatable("steampad.radial.value.screen")));
+                labels.add(new Label(y - 1, Component.translatable("steampad.radial.value.screen")));
                 y += 10;
                 y = addTextValue(colX, colW, y, slot);
             }
             case SUBMENU -> {
-                labels.add(new Label(y - 1, Text.translatable("steampad.radial.value.submenu")));
+                labels.add(new Label(y - 1, Component.translatable("steampad.radial.value.submenu")));
                 y += 10;
                 y = addTextValue(colX, colW, y, slot);
             }
@@ -217,12 +264,12 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
     }
 
     private int addTextValue(int colX, int colW, int y, RadialConfig.SlotConfig slot) {
-        TextFieldWidget value = new TextFieldWidget(this.textRenderer, colX, y, colW, 18,
-                Text.translatable("steampad.radial.action"));
+        EditBox value = new EditBox(this.font, colX, y, colW, 18,
+                Component.translatable("steampad.radial.action"));
         value.setMaxLength(256);
-        value.setText(slot.action);
-        value.setChangedListener(t -> { slot.action = t; save(); });
-        addDrawableChild(value);
+        value.setValue(slot.action);
+        value.setResponder(t -> { slot.action = t; save(); });
+        addScroll(value, y);
         return y + 22;
     }
 
@@ -233,7 +280,7 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
         cfg.setSlotCountFor(page, n);
         if (selected >= n) selected = n - 1;
         save();
-        clearAndInit();
+        rebuildWidgets();
     }
 
     private void switchWheel(int dir) {
@@ -242,7 +289,7 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
         UiSoundService.playNavigate();
         page = Math.floorMod(page + dir, n);
         selected = 0;
-        clearAndInit();
+        rebuildWidgets();
     }
 
     private void addWheel() {
@@ -252,7 +299,7 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
         page = idx;
         selected = 0;
         save();
-        clearAndInit();
+        rebuildWidgets();
     }
 
     /**
@@ -262,14 +309,14 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
      * sat untouched elsewhere in the list (the reported bug).
      */
     private void openDeleteWheelPicker() {
-        client.setScreen(new RadialWheelDeleteScreen(this, handle));
+        minecraft.setScreen(new RadialWheelDeleteScreen(this, handle));
     }
 
     /** Called by {@link RadialWheelDeleteScreen} after it deletes a wheel — refresh our state. */
     void onWheelDeleted() {
         page = Math.min(page, cfg.wheelCount() - 1);
         selected = 0;
-        clearAndInit();
+        rebuildWidgets();
     }
 
     private RadialActionType parseType(String s) {
@@ -289,18 +336,27 @@ public class RadialEditorScreen extends SteamPadBaseScreen {
     private void save() { ConfigManager.saveRadialConfig(handle); }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         renderChrome(context);
         // Live preview on the right (centered in the right third).
         RadialRenderer.render(context, this.width * 3 / 4, this.height / 2, previewSlots(), selected, handle,
-                cfg.wheelCount(), page);
-        // Field labels.
+                cfg.wheelCount(), page, null, false);
+        // Field labels — scroll with their widgets, culled the same way addScroll's widgets are
+        // (feedback: "no tienes puesto una barra de scroll... en pantallas pequeñas no puedo bajar").
         for (Label l : labels) {
-            context.drawText(textRenderer, l.text(), 14, l.y(), ACCENT, true);
+            if (!isInViewport(l.y(), 10)) continue;
+            context.drawString(font, l.text(), 14, l.y() - scrollY(), ACCENT, true);
         }
+        renderScrollbar(context, listRightX());
         super.render(context, mouseX, mouseY, delta);
     }
 
+    /** Right edge of the left (editor) column, plus a small margin — the column has a FIXED pixel
+     *  width regardless of screen size, so this must anchor off {@link #COL_X}/{@link #COL_W}, not
+     *  a fraction of {@code this.width} (bug: a width-fraction placed the scrollbar on top of the
+     *  preview wheel on screens wider than the column was designed for). */
+    private int listRightX() { return COL_X + COL_W + 10; }
+
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

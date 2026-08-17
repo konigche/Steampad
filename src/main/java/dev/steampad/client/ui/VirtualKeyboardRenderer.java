@@ -4,13 +4,12 @@ import dev.steampad.client.keyboard.KeyboardLayout;
 import dev.steampad.client.keyboard.VirtualKeyboard;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.PixelTheme;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
-
 import java.util.List;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * Draws the controller virtual keyboard as a vanilla-Minecraft pixel-art panel: sharp 1px black
@@ -108,9 +107,9 @@ public final class VirtualKeyboardRenderer {
      * Main render entry. Called from the after-screen-render hook each frame.
      * Renders either the full keyboard panel (active) or a small "press A" badge (eligible only).
      */
-    public static void render(DrawContext ctx) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        Screen screen = mc.currentScreen;
+    public static void render(GuiGraphics ctx) {
+        Minecraft mc = Minecraft.getInstance();
+        Screen screen = mc.screen;
         if (screen == null) return;
 
         if (VirtualKeyboard.isActive()) {
@@ -124,11 +123,11 @@ public final class VirtualKeyboardRenderer {
 
     // ---- Full keyboard panel -------------------------------------------------------
 
-    private static void renderKeyboard(DrawContext ctx, MinecraftClient mc, Screen screen) {
-        TextRenderer tr = mc.textRenderer;
+    private static void renderKeyboard(GuiGraphics ctx, Minecraft mc, Screen screen) {
+        Font tr = mc.font;
         Palette P = theme();
         int sw = screen.width;
-        boolean isChatScreen = screen instanceof net.minecraft.client.gui.screen.ChatScreen;
+        boolean isChatScreen = screen instanceof net.minecraft.client.gui.screens.ChatScreen;
 
         // Shared geometry (same rects the stick's nearest-key logic uses — always in sync).
         List<List<KeyboardLayout.Key>> grid = VirtualKeyboard.grid();
@@ -183,7 +182,7 @@ public final class VirtualKeyboardRenderer {
 
     /** A small translucent disc with a brighter core — the Steam-keyboard "bolita". Drawn as
      *  non-overlapping horizontal strips so the translucency stays even (no double-blended bands). */
-    private static void drawOrb(DrawContext ctx, int cx, int cy, int halo, int core) {
+    private static void drawOrb(GuiGraphics ctx, int cx, int cy, int halo, int core) {
         ctx.fill(cx - 2, cy - 5, cx + 3, cy - 4, halo);
         ctx.fill(cx - 4, cy - 4, cx + 5, cy - 2, halo);
         ctx.fill(cx - 5, cy - 2, cx + 6, cy + 3, halo);
@@ -193,7 +192,7 @@ public final class VirtualKeyboardRenderer {
     }
 
     /** Four corner brackets around the selected key (same look as the inventory slot selection). */
-    private static void drawCornerBrackets(DrawContext ctx, int x, int y, int w, int h, int c) {
+    private static void drawCornerBrackets(GuiGraphics ctx, int x, int y, int w, int h, int c) {
         int len = 5, t = 2;
         ctx.fill(x, y, x + len, y + t, c);
         ctx.fill(x, y, x + t, y + len, c);
@@ -215,10 +214,19 @@ public final class VirtualKeyboardRenderer {
      * normal gap; if it doesn't fit, shrinks only the gap between entries (never the icons/text
      * themselves) so every hint always gets drawn.
      */
-    private static void renderFooterHints(DrawContext ctx, TextRenderer tr, int sw, int y, Palette P) {
+    private static void renderFooterHints(GuiGraphics ctx, Font tr, int sw, int y, Palette P) {
         ctx.fill(0, y - 1, sw, y, P.panelEdge());
         int iconSz = 12;
         String[][] hints = VirtualKeyboard.isDualStick() ? FOOTER_HINTS_DUAL : FOOTER_HINTS;
+        // R3 = TAB completion, listed only where it does something: on the chat screen. The row already
+        // shrinks its gaps to fit whatever it is given (see this method's doc), so adding an entry
+        // cannot push another one off the edge.
+        if (VirtualKeyboard.isChatScreen()) {
+            String[][] withTab = new String[hints.length + 1][];
+            withTab[0] = new String[]{ "R3", "steampad.keyboard.hint.tab" };
+            System.arraycopy(hints, 0, withTab, 1, hints.length);
+            hints = withTab;
+        }
         int available = sw - 16;
 
         int coreWidth = 0;   // icons + "+"-chords + labels, WITHOUT the inter-entry gap
@@ -232,53 +240,62 @@ public final class VirtualKeyboardRenderer {
         int x = 8;
         for (String[] hint : hints) {
             String id = hint[0];
-            String label = Text.translatable(hint[1]).getString();
+            String label = Component.translatable(hint[1]).getString();
             // A 3rd entry is a chord modifier drawn before the main glyph as "[chord]+[main]".
             if (hint.length > 2 && !hint[2].isEmpty()) {
                 String chordId = hint[2];
                 ButtonIcon.draw(ctx, tr, x, y + 1, iconSz, chordId);
                 x += ButtonIcon.width(tr, iconSz, chordId) + 1;
-                ctx.drawText(tr, Text.literal("+"), x, y + 3, P.hintText(), false);
-                x += tr.getWidth("+") + 2;
+                ctx.drawString(tr, Component.literal("+"), x, y + 3, P.hintText(), false);
+                x += tr.width("+") + 2;
             }
             // Draw the button glyph (brand-specific PNG if available, else text fallback).
             ButtonIcon.draw(ctx, tr, x, y + 1, iconSz, id);
             int glyphW = ButtonIcon.width(tr, iconSz, id);
             x += glyphW + 2;
-            int lw = tr.getWidth(label);
-            ctx.drawText(tr, Text.literal(label), x, y + 3, P.hintText(), false);
+            int lw = tr.width(label);
+            ctx.drawString(tr, Component.literal(label), x, y + 3, P.hintText(), false);
             x += lw + gap;
         }
     }
 
     /** Width one hint entry occupies excluding the trailing inter-entry gap. */
-    private static int hintCoreWidth(TextRenderer tr, String[] hint, int iconSz) {
+    private static int hintCoreWidth(Font tr, String[] hint, int iconSz) {
         int w = 0;
         if (hint.length > 2 && !hint[2].isEmpty()) {
-            w += ButtonIcon.width(tr, iconSz, hint[2]) + 1 + tr.getWidth("+") + 2;
+            w += ButtonIcon.width(tr, iconSz, hint[2]) + 1 + tr.width("+") + 2;
         }
         w += ButtonIcon.width(tr, iconSz, hint[0]) + 2;
-        w += tr.getWidth(Text.translatable(hint[1]).getString());
+        w += tr.width(Component.translatable(hint[1]).getString());
         return w;
     }
 
     // ---- "Press A" badge (eligible but not active) --------------------------------
 
-    /** Small translucent badge near the bottom-right: "[A] Keyboard". Shows how to open. */
-    private static void renderEligibleBadge(DrawContext ctx, MinecraftClient mc, Screen screen) {
-        TextRenderer tr = mc.textRenderer;
+    /**
+     * Small translucent badge near the bottom-right: "[A] Keyboard". Shows how to open it.
+     *
+     * <p>Deliberately a plain "A" everywhere, matching what menus already do ("en los menus funciona
+     * muy bien, ahi si solo con A"). A now opens the keyboard on every screen this badge can appear on
+     * — including sign and book editors, which have no focusable field of their own (see
+     * {@code VirtualKeyboard.isFieldlessTextEntry} and its A-press call site). The user-configurable
+     * OPEN_KEYBOARD chord stays as the universal escape hatch for screens SteamPad cannot detect at
+     * all (e.g. REI's search box), where no badge can be drawn in the first place.
+     */
+    private static void renderEligibleBadge(GuiGraphics ctx, Minecraft mc, Screen screen) {
+        Font tr = mc.font;
         Palette P = theme();
-        String label = Text.translatable("steampad.keyboard.badge").getString();
+        String label = Component.translatable("steampad.keyboard.badge").getString();
         int iconSz = 10;
         int iconW = ButtonIcon.width(tr, iconSz, "A");
-        int textW = tr.getWidth(label);
+        int textW = tr.width(label);
         int totalW = iconW + 3 + textW + 8;
         int bx = screen.width - totalW - 6;
         int by = screen.height - 14;
         ctx.fill(bx - 4, by - 2, bx + totalW, by + 12, P.panelBg());
         ctx.fill(bx - 4, by - 2, bx + totalW, by - 1, P.accent());
         ButtonIcon.draw(ctx, tr, bx, by + 1, iconSz, "A");
-        ctx.drawText(tr, Text.literal(label), bx + iconW + 3, by + 2, P.hintText(), false);
+        ctx.drawString(tr, Component.literal(label), bx + iconW + 3, by + 2, P.hintText(), false);
     }
 
     // ---- Theme preview (used by the theme picker in Ajustes) ----------------------
@@ -288,7 +305,7 @@ public final class VirtualKeyboardRenderer {
      * {@link #drawKey} the real keyboard uses, so what you see here is exactly what you get, no
      * separate "preview-only" color table to drift out of sync.
      */
-    public static void renderThemePreview(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h,
+    public static void renderThemePreview(GuiGraphics ctx, Font tr, int x, int y, int w, int h,
                                           PixelTheme theme) {
         Palette P = palette(theme);
         ctx.fill(x, y, x + w, y + h, P.panelBg());
@@ -313,7 +330,7 @@ public final class VirtualKeyboardRenderer {
     // ---- Key drawing --------------------------------------------------------------
 
     /** Back-compat overload (theme preview) — never sunken. */
-    private static void drawKey(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h,
+    private static void drawKey(GuiGraphics ctx, Font tr, int x, int y, int w, int h,
                                 KeyboardLayout.Key k, boolean selected, boolean shift, Palette P) {
         drawKey(ctx, tr, x, y, w, h, k, selected, shift, false, P);
     }
@@ -325,7 +342,7 @@ public final class VirtualKeyboardRenderer {
      * face — the same press treatment the button glyphs use (feedback: "al presionar una letra del
      * teclado que se hunda, el mismo efecto que con los botones").
      */
-    private static void drawKey(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h,
+    private static void drawKey(GuiGraphics ctx, Font tr, int x, int y, int w, int h,
                                 KeyboardLayout.Key k, boolean selected, boolean shift, boolean sunken,
                                 Palette P) {
         boolean special = k.type() != KeyboardLayout.KeyType.CHAR;
@@ -345,16 +362,21 @@ public final class VirtualKeyboardRenderer {
             ctx.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x40000000);
         }
 
-        // Label. Shift up-cases letter keys for clarity; Shift key lights up when active.
-        String lbl = k.label();
+        // Label. Word keys (the clipboard row) carry a translation key instead of a fixed glyph and
+        // are resolved here, at draw time — the layout grids are built at class load, which can happen
+        // before the language files are ready. Shift up-cases letter keys for clarity; the Shift key
+        // itself lights up when active.
+        String lbl = k.labelKey() != null
+                ? Component.translatable(k.labelKey()).getString()
+                : k.label();
         if (k.type() == KeyboardLayout.KeyType.CHAR && shift && lbl.length() == 1 && Character.isLetter(lbl.charAt(0))) {
             lbl = lbl.toUpperCase();
         }
         int color = P.keyText();
         if (k.type() == KeyboardLayout.KeyType.SHIFT && shift) color = P.selEdge();
-        int tw = tr.getWidth(lbl);
+        int tw = tr.width(lbl);
         // Shadowed text = the vanilla MC button look (readable on every theme).
-        ctx.drawText(tr, Text.literal(lbl), x + (w - tw) / 2, y + (h - 8) / 2 + (sunken ? 1 : 0), color, true);
+        ctx.drawString(tr, Component.literal(lbl), x + (w - tw) / 2, y + (h - 8) / 2 + (sunken ? 1 : 0), color, true);
     }
 
 }

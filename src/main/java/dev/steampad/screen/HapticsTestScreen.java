@@ -1,11 +1,11 @@
 package dev.steampad.screen;
 
 import dev.steampad.haptics.HapticsController;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * On-demand preview of every named haptic effect ({@link HapticsController#TEST_PRESETS}), without
@@ -20,7 +20,7 @@ public class HapticsTestScreen extends ColumnSettingsScreen {
     private final Screen parent;
 
     public HapticsTestScreen(Screen parent) {
-        super(Text.translatable("steampad.haptics.test.title"));
+        super(Component.translatable("steampad.haptics.test.title"));
         this.parent = parent;
     }
 
@@ -40,8 +40,8 @@ public class HapticsTestScreen extends ColumnSettingsScreen {
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     private void addSection(HapticsController.Category cat) {
@@ -51,14 +51,14 @@ public class HapticsTestScreen extends ColumnSettingsScreen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
     }
 
     @Override
-    public void close() {
-        client.setScreen(parent);
+    public void onClose() {
+        minecraft.setScreen(parent);
     }
 }

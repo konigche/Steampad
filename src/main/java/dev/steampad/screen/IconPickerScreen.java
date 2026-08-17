@@ -1,19 +1,18 @@
 package dev.steampad.screen;
 
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * Searchable grid of every Minecraft item, used to pick a radial slot icon. Returns the item id
@@ -27,13 +26,13 @@ public class IconPickerScreen extends SteamPadBaseScreen {
     private final Screen parent;
     private final Consumer<String> onSelect;
 
-    private TextFieldWidget search;
+    private EditBox search;
     private final List<Item> all = new ArrayList<>();
     private final List<Item> filtered = new ArrayList<>();
     private int gridX, gridY, cols, rowsVisible, scroll;
 
     public IconPickerScreen(Screen parent, Consumer<String> onSelect) {
-        super(Text.translatable("steampad.radial.pick_icon"));
+        super(Component.translatable("steampad.radial.pick_icon"));
         this.parent = parent;
         this.onSelect = onSelect;
     }
@@ -41,33 +40,33 @@ public class IconPickerScreen extends SteamPadBaseScreen {
     @Override
     protected void init() {
         super.init();
-        if (all.isEmpty()) Registries.ITEM.forEach(all::add);
+        if (all.isEmpty()) BuiltInRegistries.ITEM.forEach(all::add);
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
-        search = new TextFieldWidget(this.textRenderer, x, HEADER_H + 8, w, 18,
-                Text.translatable("steampad.radial.search"));
-        search.setChangedListener(t -> { applyFilter(); scroll = 0; });
-        addDrawableChild(search);
+        search = new EditBox(this.font, x, HEADER_H + 8, w, 18,
+                Component.translatable("steampad.radial.search"));
+        search.setResponder(t -> { applyFilter(); scroll = 0; });
+        addRenderableWidget(search);
 
         gridX = x;
         gridY = HEADER_H + 34;
         cols = Math.max(1, w / CELL);
         rowsVisible = Math.max(1, (contentBottom() - gridY) / CELL);
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
         applyFilter();
     }
 
     private void applyFilter() {
         filtered.clear();
-        String q = search == null ? "" : search.getText().toLowerCase(Locale.ROOT).trim();
+        String q = search == null ? "" : search.getValue().toLowerCase(Locale.ROOT).trim();
         for (Item it : all) {
             if (q.isEmpty()) { filtered.add(it); continue; }
-            String id = Registries.ITEM.getId(it).toString();
-            String name = new ItemStack(it).getName().getString().toLowerCase(Locale.ROOT);
+            String id = BuiltInRegistries.ITEM.getKey(it).toString();
+            String name = new ItemStack(it).getHoverName().getString().toLowerCase(Locale.ROOT);
             if (id.contains(q) || name.contains(q)) filtered.add(it);
         }
     }
@@ -83,15 +82,29 @@ public class IconPickerScreen extends SteamPadBaseScreen {
         return true;
     }
 
+    //? if >=1.21.9 {
     @Override
-    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubled) {
-        int idx = cellAt(click.x(), click.y());
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubled) {
+        if (steampad$pickCellAt(click.x(), click.y())) return true;
+        return super.mouseClicked(click, doubled);
+    }
+    //?} else {
+    /*@Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (steampad$pickCellAt(mouseX, mouseY)) return true;
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+    *///?}
+
+    /** Selects the icon under (x, y) and closes, if any. */
+    private boolean steampad$pickCellAt(double x, double y) {
+        int idx = cellAt(x, y);
         if (idx >= 0 && idx < filtered.size()) {
-            onSelect.accept(Registries.ITEM.getId(filtered.get(idx)).toString());
-            close();
+            onSelect.accept(BuiltInRegistries.ITEM.getKey(filtered.get(idx)).toString());
+            onClose();
             return true;
         }
-        return super.mouseClicked(click, doubled);
+        return false;
     }
 
     private int cellAt(double mx, double my) {
@@ -103,7 +116,7 @@ public class IconPickerScreen extends SteamPadBaseScreen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
 
@@ -114,7 +127,7 @@ public class IconPickerScreen extends SteamPadBaseScreen {
                 if (idx >= filtered.size()) break;
                 int cx = gridX + col * CELL, cy = gridY + row * CELL;
                 if (idx == hovered) ctx.fill(cx, cy, cx + CELL, cy + CELL, 0x55FFFFFF);
-                ctx.drawItem(new ItemStack(filtered.get(idx)), cx + 1, cy + 1);
+                ctx.renderItem(new ItemStack(filtered.get(idx)), cx + 1, cy + 1);
             }
         }
         // Simple scroll indicator.
@@ -131,5 +144,5 @@ public class IconPickerScreen extends SteamPadBaseScreen {
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

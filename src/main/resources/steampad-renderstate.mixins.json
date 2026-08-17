@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "dev.steampad.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PlayerEntityRenderStateMixin",
+    "PlayerEntityRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

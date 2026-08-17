@@ -1,26 +1,26 @@
 package dev.steampad.client.ui;
 
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.MathHelper;
-
 import java.util.function.Consumer;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.network.chat.Component;
 
 /**
- * SteamPad slider with a consistent "Label: value" message, a {@link #nudge} hook for fine right-stick
- * adjustment, and scroll disabled so scrolling the list never changes the value (A4). Values map a
- * normalized 0..1 internal position to a [min,max] float range.
+ * SteamPad slider with a consistent "Label: value" message and scroll disabled so scrolling the list
+ * never changes the value (A4). Values map a normalized 0..1 internal position to a [min,max] float
+ * range. Right-stick fine-adjust is generic now — see {@code GamepadInputDispatcher.nudgeSlider} and
+ * {@link dev.steampad.mixin.AbstractSliderButtonAccessor}, which work on this class the same way they
+ * work on any {@link AbstractSliderButton}, vanilla's included.
  */
-public class SteamSlider extends SliderWidget {
+public class SteamSlider extends AbstractSliderButton {
 
     private final float min, max;
     private final String fmt;
-    private final Text label;
+    private final Component label;
     private final Consumer<Float> onChange;
 
-    public SteamSlider(int x, int y, int w, int h, Text label, float value,
+    public SteamSlider(int x, int y, int w, int h, Component label, float value,
                        float min, float max, String fmt, Consumer<Float> onChange) {
-        super(x, y, w, h, Text.empty(), clamp01((value - min) / (max - min)));
+        super(x, y, w, h, Component.empty(), clamp01((value - min) / (max - min)));
         this.min = min;
         this.max = max;
         this.fmt = fmt;
@@ -40,16 +40,6 @@ public class SteamSlider extends SliderWidget {
     @Override
     protected void applyValue() {
         if (onChange != null) onChange.accept(floatValue());
-    }
-
-    /** Fine adjust by a fraction of the normalized 0..1 range (used by the right stick). */
-    public void nudge(double deltaNormalized) {
-        double nv = MathHelper.clamp(this.value + deltaNormalized, 0.0, 1.0);
-        if (nv != this.value) {
-            this.value = nv;
-            updateMessage();
-            applyValue();
-        }
     }
 
     // Scrolling must NOT change the value — the list scroll owns the wheel/stick (A4).

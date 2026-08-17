@@ -2,14 +2,13 @@ package dev.steampad.screen;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
-
 import java.util.List;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Save/load named bundles of the active controller's config (button bindings, chords, radial layout,
@@ -24,11 +23,11 @@ public class ProfilesScreen extends SteamPadBaseScreen {
 
     private final Screen parent;
     private final long handle;
-    private TextFieldWidget nameField;
-    private Text status = Text.empty();
+    private EditBox nameField;
+    private Component status = Component.empty();
 
     public ProfilesScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.profiles.title"));
+        super(Component.translatable("steampad.screen.profiles.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -40,56 +39,56 @@ public class ProfilesScreen extends SteamPadBaseScreen {
     }
 
     private void rebuild() {
-        String keepTyped = nameField != null ? nameField.getText() : "";
-        this.clearChildren();
+        String keepTyped = nameField != null ? nameField.getValue() : "";
+        this.clearWidgets();
         resetScroll();
 
         int w = Math.min(360, this.width - 40);
         int x = (this.width - w) / 2;
 
-        nameField = new TextFieldWidget(this.textRenderer, x, HEADER_H + 8, w - 90, 18,
-                Text.translatable("steampad.screen.profiles.name_field"));
+        nameField = new EditBox(this.font, x, HEADER_H + 8, w - 90, 18,
+                Component.translatable("steampad.screen.profiles.name_field"));
         nameField.setMaxLength(48);
-        nameField.setText(keepTyped);
-        addDrawableChild(nameField);
+        nameField.setValue(keepTyped);
+        addRenderableWidget(nameField);
 
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.screen.profiles.save"), b -> {
-                    String name = nameField.getText();
+        addRenderableWidget(Button.builder(Component.translatable("steampad.screen.profiles.save"), b -> {
+                    String name = nameField.getValue();
                     if (name == null || name.isBlank()) return;
                     boolean ok = ConfigManager.saveProfile(name, handle);
-                    status = Text.translatable(ok ? "steampad.screen.profiles.saved"
+                    status = Component.translatable(ok ? "steampad.screen.profiles.saved"
                             : "steampad.screen.profiles.save_failed", name);
                     UiSoundService.playSelect();
                     rebuild();
                 })
-                .dimensions(x + w - 85, HEADER_H + 8, 85, 20).build());
+                .bounds(x + w - 85, HEADER_H + 8, 85, 20).build());
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
 
         List<String> profiles = ConfigManager.listProfiles();
         int y = HEADER_H + 8 + 26;
         int halfW = (w - 6) / 2;
         for (String name : profiles) {
-            ButtonWidget loadBtn = ButtonWidget.builder(
-                            Text.translatable("steampad.screen.profiles.load_row", name),
+            Button loadBtn = Button.builder(
+                            Component.translatable("steampad.screen.profiles.load_row", name),
                             b -> {
                                 boolean ok = ConfigManager.loadProfile(name, handle);
-                                status = Text.translatable(ok ? "steampad.screen.profiles.loaded"
+                                status = Component.translatable(ok ? "steampad.screen.profiles.loaded"
                                         : "steampad.screen.profiles.load_failed", name);
                                 UiSoundService.playSelect();
                             })
-                    .dimensions(x, y, halfW, 20).build();
+                    .bounds(x, y, halfW, 20).build();
             addScroll(loadBtn, y);
 
-            ButtonWidget deleteBtn = ButtonWidget.builder(Text.translatable("steampad.screen.profiles.delete"),
+            Button deleteBtn = Button.builder(Component.translatable("steampad.screen.profiles.delete"),
                             b -> {
                                 ConfigManager.deleteProfile(name);
-                                status = Text.translatable("steampad.screen.profiles.deleted", name);
+                                status = Component.translatable("steampad.screen.profiles.deleted", name);
                                 UiSoundService.playSelect();
                                 rebuild();
                             })
-                    .dimensions(x + halfW + 6, y, halfW, 20).build();
+                    .bounds(x + halfW + 6, y, halfW, 20).build();
             addScroll(deleteBtn, y);
 
             y += ROW_H;
@@ -98,17 +97,17 @@ public class ProfilesScreen extends SteamPadBaseScreen {
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         int w = Math.min(360, this.width - 40);
         renderScrollbar(ctx, (this.width + w) / 2 + 4);
         if (!status.getString().isEmpty()) {
-            ctx.drawCenteredTextWithShadow(this.textRenderer, status, this.width / 2,
+            ctx.drawCenteredString(this.font, status, this.width / 2,
                     this.height - FOOTER_H - 14, TEXT_MUTED);
         }
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

@@ -1,11 +1,13 @@
 package dev.steampad.input;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import dev.steampad.compat.mc.InputEventCompat;
+import dev.steampad.compat.mc.InventoryCompat;
 import dev.steampad.radial.RadialMenuController;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.input.MouseInput;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.util.ScreenshotRecorder;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -17,52 +19,56 @@ public final class ActionExecutor {
     private ActionExecutor() {}
 
     public static void execute(InputAction action, InputDispatchContext ctx, long handle) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
 
         switch (action) {
             // Gameplay
-            case JUMP -> pressKey(mc.options.jumpKey);
-            case SNEAK -> pressKey(mc.options.sneakKey);
+            case JUMP -> pressKey(mc.options.keyJump);
+            case SNEAK -> pressKey(mc.options.keyShift);
             case ATTACK -> pressMouseButton(mc, GLFW.GLFW_MOUSE_BUTTON_LEFT);
             case USE -> pressMouseButton(mc, GLFW.GLFW_MOUSE_BUTTON_RIGHT);
-            case SPRINT -> pressKey(mc.options.sprintKey);
-            case INVENTORY -> pressKey(mc.options.inventoryKey);
-            case SWAP_HANDS -> pressKey(mc.options.swapHandsKey);
-            case OPEN_CHAT -> pressKey(mc.options.chatKey);
-            case DROP_ITEM -> pressKey(mc.options.dropKey);
-            case CHANGE_PERSPECTIVE -> pressKey(mc.options.togglePerspectiveKey);
+            case SPRINT -> pressKey(mc.options.keySprint);
+            case INVENTORY -> pressKey(mc.options.keyInventory);
+            case SWAP_HANDS -> pressKey(mc.options.keySwapOffhand);
+            case OPEN_CHAT -> pressKey(mc.options.keyChat);
+            case DROP_ITEM -> pressKey(mc.options.keyDrop);
+            case CHANGE_PERSPECTIVE -> pressKey(mc.options.keyTogglePerspective);
             case PICK_BLOCK -> pressMouseButton(mc, GLFW.GLFW_MOUSE_BUTTON_MIDDLE);
-            case TAKE_SCREENSHOT -> ScreenshotRecorder.saveScreenshot(
-                    mc.runDirectory, mc.getFramebuffer(),
-                    text -> mc.execute(() -> mc.inGameHud.getChatHud().addMessage(text)));
+            case TAKE_SCREENSHOT -> Screenshot.grab(
+                    mc.gameDirectory, mc.getMainRenderTarget(),
+                    text -> mc.execute(() -> mc.gui.getChat().addMessage(text)));
 
             // Hotbar
             case NEXT_HOTBAR -> {
                 if (mc.player != null) {
-                    int slot = (mc.player.getInventory().getSelectedSlot() + 1) % 9;
-                    mc.player.getInventory().setSelectedSlot(slot);
+                    var inv = mc.player.getInventory();
+                    int size = Inventory.getSelectionSize();
+                    InventoryCompat.setSelectedSlot(inv,
+                            (InventoryCompat.getSelectedSlot(inv) + 1) % size);
                 }
             }
             case PREV_HOTBAR -> {
                 if (mc.player != null) {
-                    int slot = (mc.player.getInventory().getSelectedSlot() + 8) % 9;
-                    mc.player.getInventory().setSelectedSlot(slot);
+                    var inv = mc.player.getInventory();
+                    int size = Inventory.getSelectionSize();
+                    InventoryCompat.setSelectedSlot(inv,
+                            (InventoryCompat.getSelectedSlot(inv) + size - 1) % size);
                 }
             }
 
             // Pause
             case PAUSE -> {
-                if (mc.player != null && mc.currentScreen == null) {
+                if (mc.player != null && mc.screen == null) {
                     PauseGate.openPauseMenu(mc);
                 }
             }
             case DROP_STACK -> {
-                if (mc.player != null) mc.player.dropSelectedItem(true);
+                if (mc.player != null) mc.player.drop(true);
             }
 
             // GUI Navigation
             case GUI_BACK -> {
-                if (mc.currentScreen != null) mc.currentScreen.close();
+                if (mc.screen != null) mc.screen.onClose();
             }
             case GUI_PRESS -> VirtualMouseController.simulateLeftClick();
             case GUI_NAV_UP    -> navigate(mc, 0, -1);
@@ -70,10 +76,10 @@ public final class ActionExecutor {
             case GUI_NAV_LEFT  -> navigate(mc, -1, 0);
             case GUI_NAV_RIGHT -> navigate(mc,  1, 0);
             case GUI_NEXT_TAB -> {
-                if (mc.currentScreen instanceof dev.steampad.screen.TabbedScreen t) t.steampad$nextTab();
+                if (mc.screen instanceof dev.steampad.screen.TabbedScreen t) t.steampad$nextTab();
             }
             case GUI_PREV_TAB -> {
-                if (mc.currentScreen instanceof dev.steampad.screen.TabbedScreen t) t.steampad$prevTab();
+                if (mc.screen instanceof dev.steampad.screen.TabbedScreen t) t.steampad$prevTab();
             }
             case TOGGLE_VMOUSE -> VirtualMouseController.toggle();
 
@@ -90,15 +96,22 @@ public final class ActionExecutor {
             case VMOUSE_SCROLL_UP   -> VirtualMouseController.simulateScroll(1.0);
             case VMOUSE_SCROLL_DOWN -> VirtualMouseController.simulateScroll(-1.0);
 
-            // Debug — F3 overlay toggle moved to DebugHudProfile in MC 1.21.10
-            case TOGGLE_DEBUG_MENU -> mc.debugHudEntryList.toggleF3Enabled();
+            // Debug — the F3 overlay toggle moved from the HUD's DebugScreenOverlay to a
+            // Minecraft-level DebugHudProfile in 1.21.10. Same user-visible effect either way.
+            case TOGGLE_DEBUG_MENU -> {
+                //? if >=1.21.9 {
+                mc.debugEntries.toggleF3Visible();
+                //?} else {
+                /*if (mc.gui != null) mc.gui.getDebugOverlay().toggleOverlay();*/
+                //?}
+            }
 
             default -> { /* no-op for unimplemented actions */ }
         }
     }
 
-    private static void navigate(MinecraftClient mc, int dx, int dy) {
-        var screen = mc.currentScreen;
+    private static void navigate(Minecraft mc, int dx, int dy) {
+        var screen = mc.screen;
         if (screen == null) return;
         if (screen instanceof dev.steampad.screen.SteamPadBaseScreen base) {
             base.focusMoveDir(dx, dy);
@@ -107,19 +120,19 @@ public final class ActionExecutor {
         }
     }
 
-    private static void pressKey(KeyBinding key) {
+    private static void pressKey(KeyMapping key) {
         if (key == null) return;
-        KeyBinding.onKeyPressed(InputUtil.fromTranslationKey(key.getBoundKeyTranslationKey()));
+        KeyMapping.click(InputConstants.getKey(key.saveString()));
     }
 
-    private static void pressMouseButton(MinecraftClient mc, int button) {
+    private static void pressMouseButton(Minecraft mc, int button) {
         // onMouseButton widened via steampad.accesswidener.
         // MC 1.21.10 signature: onMouseButton(long window, MouseInput input, int action).
         // INJECTING marks this as a mod-injected click so MouseMixin doesn't treat it as the physical
         // mouse taking over (which would flip the active device and hide the controller cursor).
         VirtualMouseController.INJECTING = true;
         try {
-            mc.mouse.onMouseButton(mc.getWindow().getHandle(), new MouseInput(button, 0), GLFW.GLFW_PRESS);
+            InputEventCompat.fireMouseButton(mc, button, GLFW.GLFW_PRESS);
         } finally {
             VirtualMouseController.INJECTING = false;
         }

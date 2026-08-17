@@ -2,11 +2,11 @@ package dev.steampad.radial;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.RadialConfig;
+import dev.steampad.input.StickSettleGate;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 
 /**
  * Controls the radial menu lifecycle: open/close, navigation, and slot execution.
@@ -20,6 +20,10 @@ public final class RadialMenuController {
 
     private static boolean open = false;
     private static int selectedSlot = -1;
+
+    /** Stops a released stick's spring-back from re-pointing the selection — see
+     *  {@link #updateAnalog}. Reset on every open so a new gesture starts clean. */
+    private static final StickSettleGate stickGate = new StickSettleGate();
     private static long activeHandle = 0L;
     private static int slotCount = 8;
     private static List<RadialSlot> slots = new ArrayList<>();
@@ -65,11 +69,25 @@ public final class RadialMenuController {
     public static void open(long handle) {
         if (open) return;
         activeHandle = handle;
+        // `page` is remembered across opens (see its field doc) — convenient for a user's OWN
+        // wheels, but the vanilla-shortcuts wheel must never be what greets a fresh open (feedback:
+        // "esta siempre debe estar en el último lugar... cuando uso la rueda de nuevo me sale esa
+        // rueda"). It stays fully reachable by navigating the carousel WHILE the wheel is open —
+        // this only stops it from being resumed-to automatically.
+        if (isVanillaShortcutsPage(handle, page)) page = 0;
         loadSlots(handle);
+        stickGate.reset();   // a fresh wheel must never inherit the last gesture's release lockout
         open = true;
         selectedSlot = -1;
         RadialRenderer.resetBlob();   // the jelly blob starts from the wheel center (E11)
         LogUtil.debug("Radial menu opened for controller {}", handle);
+    }
+
+    private static boolean isVanillaShortcutsPage(long handle, int pageIndex) {
+        RadialConfig cfg = ConfigManager.getRadialConfig(handle);
+        cfg.normalize();
+        List<RadialConfig.WheelConfig> wheels = cfg.wheels;
+        return pageIndex >= 0 && pageIndex < wheels.size() && wheels.get(pageIndex).vanillaShortcutsWheel;
     }
 
     public static void close() {
@@ -111,10 +129,23 @@ public final class RadialMenuController {
      * — the natural gesture is to flick the stick toward a slot and then release the open button (often
      * letting the stick recentre a frame earlier). Without stickiness, {@code selectedSlot} reset to
      * -1 on that frame and both ON_CLICK and ON_RELEASE execution did nothing (the reported bug).
+     *
+     * <p><b>Release "whiplash" (reported: "selecciono una cosa y al soltar hay un latigazo y escoge
+     * otra cosa que tiene al lado").</b> Stickiness alone was not enough, because a released stick does
+     * not fall quietly to zero — it springs PAST centre and reads a real deflection the other way for
+     * about a tenth of a second. The old threshold here was 0.35, which sits INSIDE that rebound band
+     * (this project measured the ceiling at {@link StickSettleGate#REENGAGE_MAG} = 0.45 when it fixed
+     * the same bug on the virtual keyboard), so the rebound re-pointed the selection at a different
+     * sector — and since the open button is usually released in the very same breath, that wrong sector
+     * is what {@link #confirmSelection}/{@link #close} then executed. Two changes close it: the pick
+     * threshold IS the rebound ceiling now, and {@link StickSettleGate} additionally freezes the
+     * selection for the ring-down after any release, so even a rebound that clears 0.45 cannot move it.
      */
     public static void updateAnalog(float x, float y) {
         float mag = (float) Math.sqrt(x * x + y * y);
-        if (mag < 0.35f) return;   // below threshold: keep the last selection (sticky)
+        // Release gate first — see the doc above. A frozen sample keeps the sticky selection.
+        if (!stickGate.accept(mag, System.currentTimeMillis())) return;
+        if (mag < StickSettleGate.REENGAGE_MAG) return;   // below threshold: keep the last selection
         double angle = Math.atan2(y, x) + Math.PI / 2.0;   // 0 = top, clockwise; Y NOT negated
         if (angle < 0) angle += 2 * Math.PI;
         double sector = 2 * Math.PI / slotCount;
@@ -152,7 +183,7 @@ public final class RadialMenuController {
         long handle = activeHandle;
         dismiss();
         if (idx < 0) idx = 0;
-        MinecraftClient.getInstance().setScreen(
+        Minecraft.getInstance().setScreen(
                 new dev.steampad.screen.RadialEditorScreen(null, handle, idx));
     }
 
@@ -160,6 +191,7 @@ public final class RadialMenuController {
         LogUtil.debug("Executing radial slot type={} action={}", slot.type, slot.actionValue);
         switch (slot.type) {
             case CHAT_COMMAND -> sendCommand(slot.actionValue);
+            case SMART_COMMAND -> runSmartCommand(slot.actionValue);
             case KEYBIND -> triggerKeybind(slot.actionValue);
             case SCREEN_SHORTCUT -> openScreen(slot.actionValue);
             case SUBMENU -> openSubmenu(slot.actionValue);
@@ -170,20 +202,31 @@ public final class RadialMenuController {
     }
 
     private static void sendCommand(String cmd) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || cmd == null || cmd.isBlank()) return;
         if (cmd.startsWith("/")) {
-            mc.player.networkHandler.sendChatCommand(cmd.substring(1));
+            mc.player.connection.sendCommand(cmd.substring(1));
         } else {
-            mc.player.networkHandler.sendChatMessage(cmd);
+            mc.player.connection.sendChat(cmd);
         }
+    }
+
+    /** Runs a built-in command by id (see {@link SmartCommand}); unknown ids are ignored, exactly like
+     *  an unrecognized slot type, so a config written by a newer version can't throw here. */
+    private static void runSmartCommand(String id) {
+        SmartCommand cmd = SmartCommand.byId(id);
+        if (cmd == null) {
+            LogUtil.debug("Radial SMART_COMMAND '{}' not recognized.", id);
+            return;
+        }
+        cmd.execute(Minecraft.getInstance());
     }
 
     private static void triggerKeybind(String keybindId) {
         if (keybindId == null || keybindId.isBlank()) return;
-        MinecraftClient mc = MinecraftClient.getInstance();
-        for (net.minecraft.client.option.KeyBinding k : mc.options.allKeys) {
-            if (k.getId().equals(keybindId)) {
+        Minecraft mc = Minecraft.getInstance();
+        for (net.minecraft.client.KeyMapping k : mc.options.keyMappings) {
+            if (k.getName().equals(keybindId)) {
                 // Robust press/hold/release so both wasPressed() and isPressed() consumers fire, and
                 // even unbound mod keybinds trigger (see KeyTap).
                 dev.steampad.input.KeyTap.press(k);
@@ -194,13 +237,13 @@ public final class RadialMenuController {
     }
 
     private static void openScreen(String screenId) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (screenId == null || screenId.isBlank()) return;
         switch (screenId) {
             case "steampad:controller_select" ->
                     mc.setScreen(new dev.steampad.screen.ControllerSelectScreen(null));
             case "minecraft:inventory", "inventory" -> {
-                if (mc.player != null) mc.setScreen(new net.minecraft.client.gui.screen.ingame.InventoryScreen(mc.player));
+                if (mc.player != null) mc.setScreen(new net.minecraft.client.gui.screens.inventory.InventoryScreen(mc.player));
             }
             case "minecraft:pause", "pause", "menu" ->
                     dev.steampad.input.PauseGate.openPauseMenu(mc);
@@ -224,8 +267,16 @@ public final class RadialMenuController {
         open(handle);
     }
 
+    /**
+     * MALILIB_KEYBIND slot. MaLiLib's own hotkey registry is not wired yet (see
+     * {@link dev.steampad.compat.MalilibCompat#triggerKeybind}), and the editor fills this slot from
+     * the ORDINARY keybind picker — which lists vanilla {@code KeyMapping}s. So when MaLiLib can't
+     * take it, run it as a normal keybind rather than dropping it on the floor: that is the whole
+     * difference between this slot type doing nothing at all and doing the useful thing.
+     */
     private static void triggerMalilibKeybind(String keybindId) {
-        dev.steampad.compat.MalilibCompat.triggerKeybind(keybindId);
+        if (dev.steampad.compat.MalilibCompat.triggerKeybind(keybindId)) return;
+        triggerKeybind(keybindId);
     }
 
     private static void loadSlots(long handle) {

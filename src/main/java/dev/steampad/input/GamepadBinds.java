@@ -65,7 +65,18 @@ public final class GamepadBinds {
         // inventario con un chord+a"). Force-opens the virtual keyboard in any inventory-like screen,
         // for mods whose own text field SteamPad can't auto-detect (Roughly Enough Items' search box
         // lives entirely outside the screen's widget tree — see D063).
-        OPEN_KEYBOARD("", false, "steampad.bind.open_keyboard", Category.MISC);
+        OPEN_KEYBOARD("", false, "steampad.bind.open_keyboard", Category.MISC),
+        // Zoom level, in/out. These WERE hardcoded to the D-pad inside the dispatcher; they are binds
+        // now so the player can move them anywhere (e.g. LB/RB) — same defaults, so nothing changes for
+        // anyone who doesn't touch them. Only live while the zoom is active and `zoomDpadAdjust` is on
+        // (the option keeps its name for config compatibility; its label no longer says "D-pad").
+        //
+        // held = true on purpose, for BOTH modes: stepped mode must fire on the press edge (deferring
+        // it to release would make every step land late), and continuous mode (`zoomContinuous`) is
+        // literally a hold. It also keeps them out of the long-press layer system, whose hold would
+        // fight the ramp. See bPressed()'s own `!bind.held` gate for the bug that established this.
+        ZOOM_IN("DUP", true, "steampad.bind.zoom_in", Category.GAMEPLAY),
+        ZOOM_OUT("DDOWN", true, "steampad.bind.zoom_out", Category.GAMEPLAY);
 
         public final String defaultButton;
         public final boolean held;

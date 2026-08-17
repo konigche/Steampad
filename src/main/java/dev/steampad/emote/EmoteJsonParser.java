@@ -59,6 +59,9 @@ public final class EmoteJsonParser {
             String name = str(root, "name", id);
             String author = str(root, "author", "");
             String description = str(root, "description", "");
+            // Format version, read exactly as the reference's AnimationJson does: absent => 1.
+            // Drives the legacy torso->body rename below (D110).
+            int version = (int) f(root, "version", 1f);
 
             // Reference: degrees defaults TRUE; loop only honored when returnTick is present too.
             boolean degrees = bool(emote, "degrees", true);
@@ -75,7 +78,7 @@ public final class EmoteJsonParser {
             if (moves != null) {
                 for (JsonElement el : moves) {
                     if (!el.isJsonObject()) continue;
-                    parseMove(data, el.getAsJsonObject(), degrees);
+                    parseMove(data, el.getAsJsonObject(), degrees, version);
                 }
             }
             return data;
@@ -86,7 +89,7 @@ public final class EmoteJsonParser {
     }
 
     /** One "moves" entry: a tick + easing + one or more body-part objects with axis values. */
-    private static void parseMove(EmoteData data, JsonObject move, boolean degrees) {
+    private static void parseMove(EmoteData data, JsonObject move, boolean degrees, int version) {
         float tick = f(move, "tick", 0f);
         Easing easing = Easing.parse(str(move, "easing", "linear"));
         Float easingArg = move.has("easingArg") && move.get("easingArg").isJsonPrimitive()
@@ -94,10 +97,25 @@ public final class EmoteJsonParser {
         int turn = (int) f(move, "turn", 0f);
 
         for (Map.Entry<String, JsonElement> e : move.entrySet()) {
-            EmoteData.Part part = partFor(e.getKey());
+            EmoteData.Part part = partFor(e.getKey(), version);
             if (part == null || !e.getValue().isJsonObject()) continue;
             JsonObject axes = e.getValue().getAsJsonObject();
             for (Map.Entry<String, JsonElement> ax : axes.entrySet()) {
+                if (isBendKey(ax.getKey()) && ax.getValue().isJsonPrimitive()) {
+                    // v0.63.0 (D103): rendered for real now via CuboidBender — previously detected
+                    // and discarded. "axis"/"bendDirection" is the fold's own in-plane direction
+                    // (bendDir); "bend" is how far it folds — both radians, both degrees-converted
+                    // the same as pitch/yaw/roll per the reference's own AnimationJson.
+                    try {
+                        float value = ax.getValue().getAsFloat();
+                        if (degrees) value = (float) Math.toRadians(value);
+                        boolean isAmount = ax.getKey().equalsIgnoreCase("bend");
+                        data.addKeyframe(part, isAmount ? EmoteData.Axis.BEND_AMOUNT : EmoteData.Axis.BEND_DIRECTION,
+                                tick, value, easing, easingArg);
+                        if (value != 0f) data.usesBend = true;
+                    } catch (Throwable ignored) { /* non-numeric, not a real value either way */ }
+                    continue;
+                }
                 EmoteData.Axis axis = axisFor(ax.getKey());
                 if (axis == null || !ax.getValue().isJsonPrimitive()) continue;
                 float value;
@@ -120,16 +138,38 @@ public final class EmoteJsonParser {
         }
     }
 
-    private static EmoteData.Part partFor(String key) {
-        return switch (key.toLowerCase(Locale.ROOT)) {
+    /**
+     * Maps a "moves" key to its channel. {@code "body"} and {@code "torso"} are DIFFERENT channels,
+     * not synonyms (D110): {@code body} is the whole-model transform (see {@link EmoteData.Part#BODY}),
+     * {@code torso} is the body bone.
+     *
+     * <p>{@code version} reproduces the reference's own legacy rule verbatim
+     * ({@code AnimationJson}: {@code if(version < 3 && name.equals("torso")) name = "body";}) — in a
+     * pre-v3 file, a {@code "torso"} block actually carries whole-model data, which is why sitting
+     * emotes in those files are authored expecting the character to physically drop to the floor.
+     * Files that declare {@code "version": 3} mean the modern split and are taken literally.
+     */
+    private static EmoteData.Part partFor(String key, int version) {
+        String k = key.toLowerCase(Locale.ROOT);
+        if (version < 3 && k.equals("torso")) k = "body";
+        return switch (k) {
             case "head" -> EmoteData.Part.HEAD;
-            case "torso", "body" -> EmoteData.Part.TORSO;
+            case "torso" -> EmoteData.Part.TORSO;
+            case "body" -> EmoteData.Part.BODY;
             case "rightarm", "right_arm" -> EmoteData.Part.RIGHT_ARM;
             case "leftarm", "left_arm" -> EmoteData.Part.LEFT_ARM;
             case "rightleg", "right_leg" -> EmoteData.Part.RIGHT_LEG;
             case "leftleg", "left_leg" -> EmoteData.Part.LEFT_LEG;
             default -> null;   // "tick"/"easing"/"turn"/"comment"/unknown — not a body part
         };
+    }
+
+    /** "bend" (amount) / "axis" (bend direction) — the reference's mid-cuboid flex channels, unique
+     *  from the position/rotation "axis" enum values above (deliberately distinct name; a "moves"
+     *  body-part object never has both meanings for the same key). See {@link EmoteData#usesBend}. */
+    private static boolean isBendKey(String key) {
+        String k = key.toLowerCase(Locale.ROOT);
+        return k.equals("bend") || k.equals("axis") || k.equals("benddirection") || k.equals("bend_direction");
     }
 
     private static EmoteData.Axis axisFor(String key) {

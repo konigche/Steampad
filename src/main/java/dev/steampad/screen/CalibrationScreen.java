@@ -7,11 +7,11 @@ import dev.steampad.input.GamepadSnapshot;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.service.UiSoundService;
 import dev.steampad.steam.SteamInputManager;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Live calibration screen showing stick positions in real time.
@@ -28,7 +28,7 @@ public class CalibrationScreen extends SteamPadBaseScreen {
     private final GamepadSnapshot snapshot = new GamepadSnapshot();
 
     public CalibrationScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.calibration.title"));
+        super(Component.translatable("steampad.screen.calibration.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -38,15 +38,15 @@ public class CalibrationScreen extends SteamPadBaseScreen {
         super.init();
         this.cfg = ConfigManager.getControllerConfig(handle);
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.DONE, btn -> {
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, btn -> {
             UiSoundService.playSelect();
             ConfigManager.saveControllerConfig(handle);
-            close();
-        }).dimensions(this.width / 2 - 75, this.height - 30, 150, 20).build());
+            onClose();
+        }).bounds(this.width / 2 - 75, this.height - 30, 150, 20).build());
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         renderChrome(context);
 
         // Live stick values — from Steam Input if active, otherwise the GLFW/SDL3 fallback snapshot.
@@ -71,14 +71,14 @@ public class CalibrationScreen extends SteamPadBaseScreen {
         renderStickVis(context, rx, ry, right[0], right[1], cfg.rightStickDeadzone,
                 "Right Stick (dz=" + String.format("%.2f", cfg.rightStickDeadzone) + ")");
 
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.translatable("steampad.calibration.hint"),
+        context.drawCenteredString(font,
+            Component.translatable("steampad.calibration.hint"),
             this.width / 2, contentBottom() - 4, TEXT_MUTED);
 
         super.render(context, mouseX, mouseY, delta);
     }
 
-    private void renderStickVis(DrawContext ctx, int bx, int by, float rawX, float rawY,
+    private void renderStickVis(GuiGraphics ctx, int bx, int by, float rawX, float rawY,
                                  float deadzone, String label) {
         // Border
         ctx.fill(bx, by, bx + VIS_SIZE, by + VIS_SIZE, 0xFF333333);
@@ -101,9 +101,9 @@ public class CalibrationScreen extends SteamPadBaseScreen {
         int procPy = (int)(by + VIS_SIZE / 2 + proc[1] * VIS_SIZE / 2);
         ctx.fill(procPx - 2, procPy - 2, procPx + 2, procPy + 2, 0xFF44FF44);
 
-        ctx.drawText(textRenderer, Text.literal(label), bx, by - 12, 0xFFAAAAAA, true);
+        ctx.drawString(font, Component.literal(label), bx, by - 12, 0xFFAAAAAA, true);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

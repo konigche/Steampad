@@ -2,11 +2,11 @@ package dev.steampad.screen;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.input.SteamSlotDispatcher;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Edits the 10 Steam Input slot assignments for ONE context/layer (Menú, Inventario, or Montado — the
@@ -23,7 +23,7 @@ public class SteamSlotLayerScreen extends SteamPadBaseScreen {
     private final String titleKey;
 
     public SteamSlotLayerScreen(Screen parent, SteamSlotDispatcher.Context context, String titleKey) {
-        super(Text.translatable(titleKey));
+        super(Component.translatable(titleKey));
         this.parent = parent;
         this.context = context;
         this.titleKey = titleKey;
@@ -43,34 +43,34 @@ public class SteamSlotLayerScreen extends SteamPadBaseScreen {
             String assigned = SteamSlotDispatcher.displayName(
                     SteamSlotDispatcher.mapFor(context).getOrDefault(SteamSlotDispatcher.configKey(slot), "")
             ).getString();
-            Text label = Text.translatable("steampad.act.steam_slot", slot + 1, 13 + slot)
+            Component label = Component.translatable("steampad.act.steam_slot", slot + 1, 13 + slot)
                     .copy().append(": ").append(assigned);
-            ButtonWidget row = ButtonWidget.builder(label, b -> client.setScreen(
+            Button row = Button.builder(label, b -> minecraft.setScreen(
                     new SteamSlotTargetPickerScreen(this, id -> {
                         SteamSlotDispatcher.mapFor(context).put(SteamSlotDispatcher.configKey(slot), id);
                         ConfigManager.saveGlobal();
-                        client.setScreen(new SteamSlotLayerScreen(parent, context, titleKey));
-                    }))).dimensions(x, y, w, 20).build();
+                        minecraft.setScreen(new SteamSlotLayerScreen(parent, context, titleKey));
+                    }))).bounds(x, y, w, 20).build();
             addScroll(row, y);
             y += ROW_H;
         }
         finishScroll(y);
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         int w = Math.min(420, this.width - 40);
         renderScrollbar(ctx, (this.width + w) / 2 + 4);
         int hy = contentTop() - 12;
-        ctx.drawText(textRenderer, Text.translatable("steampad.slot.layer.hint"),
+        ctx.drawString(font, Component.translatable("steampad.slot.layer.hint"),
                 (this.width - w) / 2, hy, 0xFF8090A0, false);
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

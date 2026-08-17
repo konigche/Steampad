@@ -2,11 +2,11 @@ package dev.steampad.screen;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /** Basic per-controller settings: sensitivity, movement, deadzones. Two-column layout (list + description). */
 public class ControllerBasicSettingsScreen extends ColumnSettingsScreen implements TabbedScreen {
@@ -16,7 +16,7 @@ public class ControllerBasicSettingsScreen extends ColumnSettingsScreen implemen
     private ControllerConfig cfg;
 
     public ControllerBasicSettingsScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.basic.title"));
+        super(Component.translatable("steampad.screen.basic.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -58,14 +58,20 @@ public class ControllerBasicSettingsScreen extends ColumnSettingsScreen implemen
                 v -> { cfg.sneakMode = v; save(); });
         cycling("steampad.cset.sprint_mode", ControllerConfig.SprintMode.values(), cfg.sprintMode,
                 v -> { cfg.sprintMode = v; save(); });
+        cycling("steampad.cset.hotbar_radial_mode", ControllerConfig.HotbarRadialMode.values(),
+                cfg.hotbarRadialMode, v -> { cfg.hotbarRadialMode = v; save(); });
         toggle("steampad.cset.auto_jump", cfg.autoJump, v -> {
             cfg.autoJump = v;
             // Apply to the real game option — vanilla owns the auto-jump behaviour (the toggle
             // previously saved the value but never took effect).
-            if (client != null) client.options.getAutoJump().setValue(v);
+            if (minecraft != null) minecraft.options.autoJump().set(v);
             save();
         });
         toggle("steampad.cset.no_fly_drifting", cfg.noFlyDrifting, v -> { cfg.noFlyDrifting = v; save(); });
+        slider("steampad.cset.mounted_steering_deadzone", cfg.mountedSteeringDeadzone, 0f, 0.6f, "%.2f",
+                v -> { cfg.mountedSteeringDeadzone = v; save(); });
+        slider("steampad.cset.mounted_steering_smoothing", cfg.mountedSteeringSmoothing, 0f, 0.30f, "%.2fs",
+                v -> { cfg.mountedSteeringSmoothing = v; save(); });
 
         section("steampad.settings.section.deadzones");
         slider("steampad.cset.left_dz", cfg.leftStickDeadzone, 0f, 0.9f, "%.2f",
@@ -76,12 +82,12 @@ public class ControllerBasicSettingsScreen extends ColumnSettingsScreen implemen
                 v -> { cfg.buttonActivationThreshold = v; save(); });
 
         section("steampad.settings.section.configure");
-        button("steampad.cset.calibration", () -> client.setScreen(new CalibrationScreen(this, handle)));
+        button("steampad.cset.calibration", () -> minecraft.setScreen(new CalibrationScreen(this, handle)));
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     @Override public void steampad$nextTab() { SettingsTabs.cycle(SettingsTabs.BASIC, +1, parent, handle); }
@@ -90,13 +96,13 @@ public class ControllerBasicSettingsScreen extends ColumnSettingsScreen implemen
     private void save() { ConfigManager.saveControllerConfig(handle); }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
-        SettingsTabs.renderGlyphs(ctx, textRenderer, listX(), HEADER_H + 8, listW());
+        SettingsTabs.renderGlyphs(ctx, font, listX(), HEADER_H + 8, listW());
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

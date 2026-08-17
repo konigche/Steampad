@@ -4,11 +4,11 @@ import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /** Advanced per-controller settings: vibration, gyro. Two-column layout (list + description). */
 public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen implements TabbedScreen {
@@ -18,7 +18,7 @@ public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen imple
     private ControllerConfig cfg;
 
     public ControllerAdvancedSettingsScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.advanced.title"));
+        super(Component.translatable("steampad.screen.advanced.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -48,7 +48,7 @@ public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen imple
             // Steam-only and was a silent no-op for fallback controllers — the F6 bug).
             if (active != 0L) ControllerManager.rumble(active, cfg.vibrationMaster * 0.6f, 300);
         });
-        button("steampad.cset.haptics_test", () -> client.setScreen(new HapticsTestScreen(this)));
+        button("steampad.cset.haptics_test", () -> minecraft.setScreen(new HapticsTestScreen(this)));
 
         section("steampad.settings.section.gyro");
         cycling("steampad.cset.gyro_behaviour", ControllerConfig.GyroMode.values(), cfg.gyroBehaviour,
@@ -75,6 +75,8 @@ public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen imple
         slider("steampad.cset.zoom_sens", cfg.zoomSensitivity, 0.05f, 1f, "%.2f",
                 v -> { cfg.zoomSensitivity = v; save(); });
         toggle("steampad.cset.zoom_dpad", cfg.zoomDpadAdjust, v -> { cfg.zoomDpadAdjust = v; save(); });
+        toggle("steampad.cset.zoom_continuous", cfg.zoomContinuous,
+                v -> { cfg.zoomContinuous = v; save(); });
         toggle("steampad.cset.zoom_reset", cfg.zoomResetOnRelease,
                 v -> { cfg.zoomResetOnRelease = v; save(); });
         toggle("steampad.cset.zoom_marker", cfg.zoomMarkerEnabled,
@@ -97,14 +99,16 @@ public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen imple
                 v -> { cfg.zoomCinematicBars = v; save(); });
         slider("steampad.cset.zoom_cinematic_bars_height", cfg.zoomCinematicBarsHeightPct, 5f, 20f, "%.0f%%",
                 v -> { cfg.zoomCinematicBarsHeightPct = v; save(); });
+        toggle("steampad.cset.zoom_first_person", cfg.zoomFirstPerson,
+                v -> { cfg.zoomFirstPerson = v; save(); });
 
         section("steampad.settings.section.advanced");
         toggle("steampad.cset.mixed_input", cfg.mixedInput, v -> { cfg.mixedInput = v; save(); });
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     /** Vibration slider, range 0..2 (0%–200%). */
@@ -118,13 +122,13 @@ public class ControllerAdvancedSettingsScreen extends ColumnSettingsScreen imple
     private void save() { ConfigManager.saveControllerConfig(handle); }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
-        SettingsTabs.renderGlyphs(ctx, textRenderer, listX(), HEADER_H + 8, listW());
+        SettingsTabs.renderGlyphs(ctx, font, listX(), HEADER_H + 8, listW());
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

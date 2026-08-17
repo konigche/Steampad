@@ -1,10 +1,10 @@
 package dev.steampad.screen;
 
 import dev.steampad.config.ConfigManager;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * Shown ONCE EVER, the first time any controller becomes active (see {@code SteamPadClient}) —
@@ -14,7 +14,7 @@ import net.minecraft.text.Text;
  * its own settings screen — not a tutorial, just "here's what exists and where to turn it on".
  *
  * <p>{@code parent} may be null (this is opened directly over gameplay, not navigated to from another
- * screen) — {@link #close()} accounts for that.
+ * screen) — {@link #onClose()} accounts for that.
  */
 public class OnboardingScreen extends ColumnSettingsScreen {
 
@@ -22,7 +22,7 @@ public class OnboardingScreen extends ColumnSettingsScreen {
     private final long handle;
 
     public OnboardingScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.onboarding.title"));
+        super(Component.translatable("steampad.screen.onboarding.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -33,30 +33,30 @@ public class OnboardingScreen extends ColumnSettingsScreen {
         beginLayout();
 
         section("steampad.onboarding.section.highlights");
-        button("steampad.onboarding.radial", () -> client.setScreen(new RadialEditorScreen(this, handle)));
-        button("steampad.onboarding.emotes", () -> client.setScreen(new GlobalSettingsScreen(this)));
-        button("steampad.onboarding.zoom", () -> client.setScreen(new ControllerAdvancedSettingsScreen(this, handle)));
-        button("steampad.onboarding.third_person", () -> client.setScreen(new GlobalSettingsScreen(this)));
-        button("steampad.onboarding.haptics", () -> client.setScreen(new HapticsTestScreen(this)));
-        button("steampad.onboarding.buttons", () -> client.setScreen(new BindingsScreen(this, handle)));
+        button("steampad.onboarding.radial", () -> minecraft.setScreen(new RadialEditorScreen(this, handle)));
+        button("steampad.onboarding.emotes", () -> minecraft.setScreen(new GlobalSettingsScreen(this)));
+        button("steampad.onboarding.zoom", () -> minecraft.setScreen(new ControllerAdvancedSettingsScreen(this, handle)));
+        button("steampad.onboarding.third_person", () -> minecraft.setScreen(new GlobalSettingsScreen(this)));
+        button("steampad.onboarding.haptics", () -> minecraft.setScreen(new HapticsTestScreen(this)));
+        button("steampad.onboarding.buttons", () -> minecraft.setScreen(new BindingsScreen(this, handle)));
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.onboarding.dismiss"), btn -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("steampad.onboarding.dismiss"), btn -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         ConfigManager.getGlobal().hasSeenOnboarding = true;
         ConfigManager.saveGlobal();
-        if (client != null) client.setScreen(parent);
+        if (minecraft != null) minecraft.setScreen(parent);
     }
 }

@@ -88,10 +88,43 @@ public final class SteamActionRegistry {
     private static boolean registered = false;
     private static SteamController steamController;
 
+    /** Every registered action by its VDF name, in registration order. Populated at the end of
+     *  {@link #registerAll} from the fields above, so it can never drift from what was actually
+     *  resolved. Diagnostics-only — the hot paths keep using the typed fields directly. */
+    private static final java.util.LinkedHashMap<String, SteamControllerDigitalActionHandle>
+            digitalByName = new java.util.LinkedHashMap<>();
+    private static final java.util.LinkedHashMap<String, SteamControllerAnalogActionHandle>
+            analogByName = new java.util.LinkedHashMap<>();
+
     private SteamActionRegistry() {}
 
     public static boolean isRegistered() {
         return registered;
+    }
+
+    /** Digital actions by VDF name (diagnostics). Empty until {@link #registerAll} has run. */
+    public static java.util.Map<String, SteamControllerDigitalActionHandle> digitalActionsByName() {
+        return java.util.Collections.unmodifiableMap(digitalByName);
+    }
+
+    /** Analog actions by VDF name (diagnostics). Empty until {@link #registerAll} has run. */
+    public static java.util.Map<String, SteamControllerAnalogActionHandle> analogActionsByName() {
+        return java.util.Collections.unmodifiableMap(analogByName);
+    }
+
+    /** The four action sets by VDF name (diagnostics), in context order. */
+    public static java.util.Map<String, SteamControllerActionSetHandle> actionSetsByName() {
+        java.util.LinkedHashMap<String, SteamControllerActionSetHandle> m = new java.util.LinkedHashMap<>();
+        m.put("SteamPad_Gameplay", actionSetGameplay);
+        m.put("SteamPad_Menu", actionSetMenu);
+        m.put("SteamPad_Inventory", actionSetInventory);
+        m.put("SteamPad_Mounted", actionSetMounted);
+        return m;
+    }
+
+    /** Raw native value behind a handle (0 = Steam could not resolve it). */
+    public static long rawValueOf(SteamNativeHandle handle) {
+        return handle == null ? 0L : SteamNativeHandle.getNativeHandle(handle);
     }
 
     public static void registerAll(SteamController controller) {
@@ -157,11 +190,64 @@ public final class SteamActionRegistry {
         analogRightStick = controller.getAnalogActionHandle("steampad_right_stick");
         analogVMouse     = controller.getAnalogActionHandle("steampad_vmouse");
 
+        rebuildNameIndex();
+
         registered = true;
         LogUtil.info("Steam Input action handles registered. ActionSets valid: Gameplay={}, Menu={}, "
                         + "Inventory={}, Mounted={}",
                 isValidHandle(actionSetGameplay), isValidHandle(actionSetMenu),
                 isValidHandle(actionSetInventory), isValidHandle(actionSetMounted));
+    }
+
+    /** Mirrors the resolved handles into the by-name maps used by the debug dump. Kept next to
+     *  {@link #registerAll} so a new action added there is obvious here too. */
+    private static void rebuildNameIndex() {
+        digitalByName.clear();
+        digitalByName.put("steampad_walk_forward", actionWalkForward);
+        digitalByName.put("steampad_walk_backward", actionWalkBackward);
+        digitalByName.put("steampad_strafe_left", actionStrafeLeft);
+        digitalByName.put("steampad_strafe_right", actionStrafeRight);
+        digitalByName.put("steampad_jump", actionJump);
+        digitalByName.put("steampad_sneak", actionSneak);
+        digitalByName.put("steampad_attack", actionAttack);
+        digitalByName.put("steampad_use", actionUse);
+        digitalByName.put("steampad_sprint", actionSprint);
+        digitalByName.put("steampad_pause", actionPause);
+        digitalByName.put("steampad_inventory", actionInventory);
+        digitalByName.put("steampad_swap_hands", actionSwapHands);
+        digitalByName.put("steampad_open_chat", actionOpenChat);
+        digitalByName.put("steampad_drop_item", actionDropItem);
+        digitalByName.put("steampad_drop_stack", actionDropStack);
+        digitalByName.put("steampad_pick_block", actionPickBlock);
+        digitalByName.put("steampad_change_perspective", actionChangePerspective);
+        digitalByName.put("steampad_next_hotbar", actionNextHotbar);
+        digitalByName.put("steampad_prev_hotbar", actionPrevHotbar);
+        digitalByName.put("steampad_open_radial", actionOpenRadial);
+        digitalByName.put("steampad_toggle_debug", actionToggleDebug);
+        digitalByName.put("steampad_gyro_button", actionGyroButton);
+        for (int i = 0; i < SLOT_COUNT; i++) {
+            digitalByName.put("steampad_slot_" + (i + 1), actionSlots[i]);
+        }
+        digitalByName.put("steampad_gui_press", actionGuiPress);
+        digitalByName.put("steampad_gui_back", actionGuiBack);
+        digitalByName.put("steampad_gui_nav_up", actionGuiNavUp);
+        digitalByName.put("steampad_gui_nav_down", actionGuiNavDown);
+        digitalByName.put("steampad_gui_nav_left", actionGuiNavLeft);
+        digitalByName.put("steampad_gui_nav_right", actionGuiNavRight);
+        digitalByName.put("steampad_gui_next_tab", actionGuiNextTab);
+        digitalByName.put("steampad_gui_prev_tab", actionGuiPrevTab);
+        digitalByName.put("steampad_cycle_forward", actionCycleForward);
+        digitalByName.put("steampad_cycle_backward", actionCycleBackward);
+        digitalByName.put("steampad_toggle_vmouse", actionToggleVMouse);
+        digitalByName.put("steampad_radial_nav_up", actionRadialNavUp);
+        digitalByName.put("steampad_radial_nav_down", actionRadialNavDown);
+        digitalByName.put("steampad_radial_nav_left", actionRadialNavLeft);
+        digitalByName.put("steampad_radial_nav_right", actionRadialNavRight);
+
+        analogByName.clear();
+        analogByName.put("steampad_left_stick", analogLeftStick);
+        analogByName.put("steampad_right_stick", analogRightStick);
+        analogByName.put("steampad_vmouse", analogVMouse);
     }
 
     /** Activates the ActionSet matching an in-mod slot layer/context. Inventory and Mounted fall back

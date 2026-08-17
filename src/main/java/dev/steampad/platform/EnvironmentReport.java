@@ -54,8 +54,13 @@ public final class EnvironmentReport {
                 .steamLaunchAppId(launchAppId)
                 .build();
 
-        LogUtil.info("Environment: OS={}, Linux={}, Gamescope={}, SteamDeck={}",
-                osName, isLinux, isGamescope, isSteamDeck);
+        // Runtime containment is logged from the start because it decides which host-side advice is even
+        // applicable, and because the mod previously ASSUMED Flatpak and printed a fix command that does
+        // nothing on a native install. Also the first thing to check when hot-plug detection misbehaves:
+        // SDL learns about newly connected pads over udev's netlink socket, which containers can block.
+        LogUtil.info("Environment: OS={}, Linux={}, Gamescope={}, SteamDeck={}, Runtime={}",
+                osName, isLinux, isGamescope, isSteamDeck,
+                isLinux ? LinuxRuntimeInspector.containerName() : "n/a");
         LogUtil.info("[SteamPad] Steam launch AppID detection: detected={} ({})",
                 launchAppId, SteamLaunchDetector.rawDiagnostics());
 

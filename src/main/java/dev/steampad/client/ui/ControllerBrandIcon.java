@@ -1,9 +1,8 @@
 package dev.steampad.client.ui;
 
 import dev.steampad.steam.SteamControllerHandleRef.ControllerType;
-import net.minecraft.client.gui.DrawContext;
-
 import java.util.Locale;
+import net.minecraft.client.gui.GuiGraphics;
 
 /**
  * Stylized brand/category marks for the controller-select list, drawn from primitives (no PNG
@@ -17,17 +16,19 @@ public final class ControllerBrandIcon {
 
     private enum Brand { STEAM_DECK, EIGHTBITDO, XBOX, PLAYSTATION, SWITCH, STEAM, GENERIC }
 
-    /** Draws a brand mark filling a {@code size} box at top-left (x,y). */
-    public static void draw(DrawContext ctx, int x, int y, int size, ControllerType type, String name) {
+    /** Draws a brand mark filling a {@code size} box at top-left (x,y). {@code vendorId} is the real
+     *  USB VID when the backend can read it (0 = unknown — always the case for GLFW/Steam Input refs),
+     *  used to identify a pad whose brand doesn't show in its own name string (e.g. an 8BitDo switched
+     *  to an Xbox-compatible mode). */
+    public static void draw(GuiGraphics ctx, int x, int y, int size, ControllerType type, String name, int vendorId) {
         // Prefer the per-brand silhouette PNG (controller.png); fall back to the vector marks below.
-        net.minecraft.util.Identifier tex = ButtonTextureManager.resolveSilhouette(type, name);
+        net.minecraft.resources.ResourceLocation tex = ButtonTextureManager.resolveSilhouette(type, name, vendorId);
         if (tex != null) {
-            ctx.drawTexture(net.minecraft.client.gl.RenderPipelines.GUI_TEXTURED, tex, x, y, 0f, 0f,
-                    size, size, ButtonTextureManager.TEX, ButtonTextureManager.TEX,
+            dev.steampad.compat.mc.RenderCompat.blitTexture(ctx, tex, x, y, size, size,
                     ButtonTextureManager.TEX, ButtonTextureManager.TEX);
             return;
         }
-        Brand brand = resolve(type, name);
+        Brand brand = resolve(type, name, vendorId);
         int cx = x + size / 2;
         int cy = y + size / 2;
         int r = size / 2 - 1;
@@ -48,8 +49,8 @@ public final class ControllerBrandIcon {
      * from the device name and category. Replaces the raw enum name ("GENERIC") that used to show.
      * Falls back to "Generic" only when nothing recognizable is found.
      */
-    public static String manufacturer(ControllerType type, String name) {
-        return switch (resolve(type, name)) {
+    public static String manufacturer(ControllerType type, String name, int vendorId) {
+        return switch (resolve(type, name, vendorId)) {
             case EIGHTBITDO  -> "8BitDo";
             case STEAM_DECK  -> "Valve";
             case STEAM       -> "Valve";
@@ -60,9 +61,15 @@ public final class ControllerBrandIcon {
         };
     }
 
-    private static Brand resolve(ControllerType type, String name) {
+    private static Brand resolve(ControllerType type, String name, int vendorId) {
         String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
-        if (n.contains("8bitdo") || n.contains("8bit")) return Brand.EIGHTBITDO;
+        // VID checked ahead of the name string: an 8BitDo switched to an Xbox-compatible mode (the
+        // exact case that motivated this) reports a name that says nothing about its real brand, but
+        // its vendor ID never changes. ControllerType has no EIGHTBITDO value by design (it's the
+        // FUNCTIONAL classification — Xbox-compatible mode correctly resolves to XBOX there, for glyph
+        // purposes), so VID is the only reliable signal for the separate cosmetic brand label/icon.
+        if (vendorId == dev.steampad.steam.SteamControllerHandleRef.EIGHTBITDO_VENDOR_ID
+                || n.contains("8bitdo") || n.contains("8bit")) return Brand.EIGHTBITDO;
         if (n.contains("steam deck") || type == ControllerType.STEAM_DECK) return Brand.STEAM_DECK;
         if (n.contains("dualsense") || n.contains("dualshock") || n.contains("sony")
                 || n.contains("playstation") || type == ControllerType.PLAYSTATION) return Brand.PLAYSTATION;
@@ -75,7 +82,7 @@ public final class ControllerBrandIcon {
 
     // — marks —
 
-    private static void steamDeck(DrawContext ctx, int x, int y, int size, int cx, int cy, int r) {
+    private static void steamDeck(GuiGraphics ctx, int x, int y, int size, int cx, int cy, int r) {
         // Handheld silhouette: wide body + two sticks.
         int bodyL = x + 1, bodyR = x + size - 1, bodyT = cy - size / 5, bodyB = cy + size / 5;
         Draw.fillRoundRect(ctx, bodyL, bodyT, bodyR, bodyB, 4, 0xFF2B2B2E);
@@ -84,7 +91,7 @@ public final class ControllerBrandIcon {
         Draw.outlineCircle(ctx, cx, cy, r, 1, 0xFF454549);
     }
 
-    private static void eightBitDo(DrawContext ctx, int x, int y, int size) {
+    private static void eightBitDo(GuiGraphics ctx, int x, int y, int size) {
         // Retro 3x3 grid: mix of squares and a circle (the 8BitDo button motif) on a cream tile.
         Draw.fillRoundRect(ctx, x, y, x + size, y + size, 3, 0xFFEFE7D2);
         int pad = 2, cell = (size - pad * 2) / 3, c0 = x + pad, r0 = y + pad, dark = 0xFF20242B;
@@ -97,7 +104,7 @@ public final class ControllerBrandIcon {
         Draw.fillCircle(ctx, c0 + 2 * cell + cell / 2, r0 + 2 * cell + cell / 2, Math.max(1, cell / 2 - 1), 0xFFC0392B);
     }
 
-    private static void xbox(DrawContext ctx, int cx, int cy, int r) {
+    private static void xbox(GuiGraphics ctx, int cx, int cy, int r) {
         Draw.fillCircle(ctx, cx, cy, r, 0xFF107C10);          // Xbox green
         Draw.fillCircle(ctx, cx, cy, r - 2, 0xFF0E6B0E);
         int s = r - 3;
@@ -105,7 +112,7 @@ public final class ControllerBrandIcon {
         Draw.line(ctx, cx + s, cy - s, cx - s, cy + s, 2, 0xFFFFFFFF);
     }
 
-    private static void playstation(DrawContext ctx, int x, int y, int size, int cx, int cy) {
+    private static void playstation(GuiGraphics ctx, int x, int y, int size, int cx, int cy) {
         Draw.fillRoundRect(ctx, x, y, x + size, y + size, 3, 0xFF1C3A8F);
         int q = size / 4, tint = 0xFFFFFFFF;
         Draw.fillTriangleUp(ctx, cx, y + q, q - 2, tint);                 // triangle (top)
@@ -114,7 +121,7 @@ public final class ControllerBrandIcon {
         Draw.drawSquareOutline(ctx, cx, y + size - q, q - 3, 2, tint);    // square (bottom)
     }
 
-    private static void nswitch(DrawContext ctx, int x, int y, int size, int cx, int cy, int r) {
+    private static void nswitch(GuiGraphics ctx, int x, int y, int size, int cx, int cy, int r) {
         // Two Joy-Cons flanking a dark screen.
         int jw = size / 4;
         Draw.fillRoundRect(ctx, x, y, x + jw, y + size, 3, 0xFFE60012);          // left red
@@ -122,7 +129,7 @@ public final class ControllerBrandIcon {
         ctx.fill(x + jw, y + 2, x + size - jw, y + size - 2, 0xFF1A1A1A);        // screen
     }
 
-    private static void steam(DrawContext ctx, int cx, int cy, int r) {
+    private static void steam(GuiGraphics ctx, int cx, int cy, int r) {
         Draw.fillCircle(ctx, cx, cy, r, 0xFF1B2838);
         Draw.outlineCircle(ctx, cx, cy, r, 1, 0xFF66C0F4);
         Draw.fillCircle(ctx, cx + r / 3, cy - r / 3, Math.max(2, r / 3), 0xFF66C0F4);
@@ -130,7 +137,7 @@ public final class ControllerBrandIcon {
         Draw.line(ctx, cx - r / 4, cy + r / 4, cx + r / 3, cy - r / 3, 1, 0xFF66C0F4);
     }
 
-    private static void generic(DrawContext ctx, int x, int y, int size, int cx, int cy) {
+    private static void generic(GuiGraphics ctx, int x, int y, int size, int cx, int cy) {
         // Stylized gamepad: rounded body, two grips, a D-pad on the left and face buttons on the right.
         int bodyT = cy - size / 5, bodyB = cy + size / 5;
         Draw.fillRoundRect(ctx, x + 1, bodyT - 1, x + size - 1, bodyB + 1, 5, 0xFF3A3F47);

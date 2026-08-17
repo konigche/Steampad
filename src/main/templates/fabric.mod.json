@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": [
+    "${mod_author}"
+  ],
+  "contact": {
+    "sources": "https://github.com/${github}",
+    "issues": "https://github.com/${github}/issues"
+  },
+  "license": "${mod_license}",
+  "icon": "assets/steampad/textures/gui/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "dev.steampad.SteamPadMod"
+    ],
+    "client": [
+      "dev.steampad.client.SteamPadClient"
+    ],
+    "modmenu": [
+      "dev.steampad.compat.ModMenuApiImpl"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "${fapi}",
+    "minecraft": "${mc}",
+    "java": ">=21"
+  },
+  "suggests": {
+    "cloth-config": "*",
+    "malilib": "*"
+  },
+  "custom": {
+    "modmenu:badges": [
+      "library"
+    ]
+  }
+}

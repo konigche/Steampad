@@ -230,4 +230,85 @@ public final class SteamInputManager {
     public static SteamController getRawController() {
         return steamController;
     }
+
+    /**
+     * Asks Steam, live, which of our declared actions are actually BOUND for this controller under the
+     * currently active action set.
+     *
+     * <p>This is the direct answer to "Steam shows the layers but nothing is mapped": Steam reports
+     * {@code active=true} for an action only when the loaded controller configuration binds it to a
+     * physical input. Zero bound actions with valid handles means the manifest reached Steam but the
+     * configuration did not — the two failure modes look identical from the outside, and nothing else
+     * in the mod could tell them apart.
+     *
+     * @return a compact human-readable summary; never throws.
+     */
+    public static String describeBoundActions(long rawHandle) {
+        if (steamController == null) return "Steam Input not initialized";
+        if (SteamActionRegistry.digitalActionsByName().isEmpty()) return "no actions registered yet";
+
+        SteamControllerHandle ctrl = new SteamControllerHandle(rawHandle);
+        StringBuilder sb = new StringBuilder();
+        int totalBound = 0;
+
+        // Probe EVERY action set, not just whichever happens to be active. Steam reports an action as
+        // active only while ITS OWN set is the active one, so a probe that reads the current set alone
+        // reports zero for every binding made in any other set — which is exactly how a Gameplay
+        // binding looked like "Steam has no bindings at all" when the dump was taken with a menu open.
+        for (var setEntry : SteamActionRegistry.actionSetsByName().entrySet()) {
+            if (SteamActionRegistry.rawValueOf(setEntry.getValue()) == 0L) {
+                sb.append("\n    ").append(setEntry.getKey()).append(": set handle 0 (not resolved)");
+                continue;
+            }
+            try {
+                steamController.activateActionSet(ctrl, setEntry.getValue());
+                // Activation is applied by Steam on its next frame; without this flush the probe would
+                // still be reading the previously active set's data.
+                steamController.runFrame();
+            } catch (Throwable t) {
+                sb.append("\n    ").append(setEntry.getKey()).append(": could not activate (").append(t).append(')');
+                continue;
+            }
+
+            List<String> bound = new ArrayList<>();
+            int probed = 0;
+            for (var e : SteamActionRegistry.digitalActionsByName().entrySet()) {
+                if (SteamActionRegistry.rawValueOf(e.getValue()) == 0L) continue;
+                probed++;
+                try {
+                    steamController.getDigitalActionData(ctrl, e.getValue(), digitalDataBuffer);
+                    if (digitalDataBuffer.getActive()) bound.add(e.getKey());
+                } catch (Throwable ignored) {
+                    // A single unreadable action must not abort the whole probe.
+                }
+            }
+            List<String> liveAnalog = new ArrayList<>();
+            for (var e : SteamActionRegistry.analogActionsByName().entrySet()) {
+                if (SteamActionRegistry.rawValueOf(e.getValue()) == 0L) continue;
+                try {
+                    steamController.getAnalogActionData(ctrl, e.getValue(), analogDataBuffer);
+                    if (analogDataBuffer.getActive()) liveAnalog.add(e.getKey());
+                } catch (Throwable ignored) {}
+            }
+            totalBound += bound.size();
+            sb.append("\n    ").append(setEntry.getKey()).append(": ")
+              .append(bound.size()).append('/').append(probed).append(" digital");
+            if (!bound.isEmpty()) sb.append(" -> ").append(String.join(", ", bound));
+            sb.append("  |  analog: ").append(liveAnalog.isEmpty() ? "none" : String.join(", ", liveAnalog));
+        }
+
+        // Leave the set the mod actually wants active — the next SteamSlotDispatcher tick re-asserts it
+        // anyway, but restoring here keeps a debug dump from changing gameplay state even for one tick.
+        try {
+            SteamActionRegistry.activateSetFor(
+                    dev.steampad.input.SteamSlotDispatcher.currentContext(
+                            net.minecraft.client.Minecraft.getInstance()), rawHandle);
+        } catch (Throwable ignored) {}
+
+        String header = totalBound == 0
+                ? "0 bindings across ALL FOUR action sets — Steam applied no SteamPad configuration to "
+                  + "this pad (the action manifest loaded, its controller configuration did not)."
+                : totalBound + " binding(s) found across the four action sets:";
+        return header + sb;
+    }
 }

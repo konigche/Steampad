@@ -3,10 +3,10 @@ package dev.steampad.screen;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.RadialConfig;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Picker for which radial wheel to delete (feedback: "poder seleccionar que rueda quieres eliminar...
@@ -25,7 +25,7 @@ public class RadialWheelDeleteScreen extends SteamPadBaseScreen {
     private int confirming = -1;
 
     public RadialWheelDeleteScreen(RadialEditorScreen editor, long handle) {
-        super(Text.translatable("steampad.radial.wheel.delete.title"));
+        super(Component.translatable("steampad.radial.wheel.delete.title"));
         this.editor = editor;
         this.handle = handle;
     }
@@ -42,42 +42,42 @@ public class RadialWheelDeleteScreen extends SteamPadBaseScreen {
         if (confirming >= 0 && confirming < cfg.wheelCount()) {
             int page = confirming;
             int n = cfg.configuredSlotCountFor(page);
-            ButtonWidget warn = ButtonWidget.builder(
-                    Text.translatable("steampad.radial.wheel.delete.confirm", page + 1, n), b -> {})
-                    .dimensions(colX, y, colW, 20).build();
+            Button warn = Button.builder(
+                    Component.translatable("steampad.radial.wheel.delete.confirm", page + 1, n), b -> {})
+                    .bounds(colX, y, colW, 20).build();
             warn.active = false;   // a label, not a real button
-            addDrawableChild(warn);
+            addRenderableWidget(warn);
             y += 28;
-            addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.radial.wheel.delete.yes"),
-                    b -> doDelete(page)).dimensions(colX, y, colW / 2 - 4, 20).build());
-            addDrawableChild(ButtonWidget.builder(ScreenTexts.CANCEL, b -> { confirming = -1; clearAndInit(); })
-                    .dimensions(colX + colW / 2 + 4, y, colW / 2 - 4, 20).build());
+            addRenderableWidget(Button.builder(Component.translatable("steampad.radial.wheel.delete.yes"),
+                    b -> doDelete(page)).bounds(colX, y, colW / 2 - 4, 20).build());
+            addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> { confirming = -1; rebuildWidgets(); })
+                    .bounds(colX + colW / 2 + 4, y, colW / 2 - 4, 20).build());
         } else {
             confirming = -1;
             int wheels = cfg.wheelCount();
             for (int i = 0; i < wheels; i++) {
                 int page = i;
                 int configured = cfg.configuredSlotCountFor(page);
-                Text label = configured == 0
-                        ? Text.translatable("steampad.radial.wheel.delete.row_empty", page + 1)
-                        : Text.translatable("steampad.radial.wheel.delete.row_used", page + 1, configured);
-                ButtonWidget row = ButtonWidget.builder(label, b -> {
+                Component label = configured == 0
+                        ? Component.translatable("steampad.radial.wheel.delete.row_empty", page + 1)
+                        : Component.translatable("steampad.radial.wheel.delete.row_used", page + 1, configured);
+                Button row = Button.builder(label, b -> {
                     if (configured == 0) {
                         doDelete(page);
                     } else {
                         confirming = page;
                         UiSoundService.playNavigate();
-                        clearAndInit();
+                        rebuildWidgets();
                     }
-                }).dimensions(colX, y, colW, 20).build();
+                }).bounds(colX, y, colW, 20).build();
                 row.active = wheels > 1;   // at least one wheel must always remain
-                addDrawableChild(row);
+                addRenderableWidget(row);
                 y += 24;
             }
         }
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     private void doDelete(int page) {
@@ -85,15 +85,15 @@ public class RadialWheelDeleteScreen extends SteamPadBaseScreen {
         ConfigManager.saveRadialConfig(handle);
         UiSoundService.playSelect();
         editor.onWheelDeleted();
-        close();
+        onClose();
     }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
     }
 
     @Override
-    public void close() { client.setScreen(editor); }
+    public void onClose() { minecraft.setScreen(editor); }
 }

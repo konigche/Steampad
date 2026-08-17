@@ -4,8 +4,8 @@ import dev.steampad.config.ConfigManager;
 import dev.steampad.steam.SteamInputManager;
 import dev.steampad.util.LogUtil;
 import dev.steampad.util.TimeUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 
 /**
  * Monitors battery level of the active controller and notifies the player
@@ -44,10 +44,10 @@ public final class BatteryMonitorService {
     }
 
     private static void notifyLowBattery(int percentageInt) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            mc.player.sendMessage(
-                Text.literal("§e[SteamPad] §f").append(Text.translatable("steampad.notification.low_battery", percentageInt)),
+            mc.player.displayClientMessage(
+                Component.literal("§e[SteamPad] §f").append(Component.translatable("steampad.notification.low_battery", percentageInt)),
                 true // actionbar, not chat
             );
             LogUtil.info("Low battery notification sent: {}%", percentageInt);

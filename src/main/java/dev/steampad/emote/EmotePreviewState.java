@@ -21,4 +21,12 @@ public interface EmotePreviewState {
     EmoteData steampad$pinnedPreviewData();
 
     float steampad$pinnedPreviewTick();
+
+    /** D111: true when this queued draw is a GUI preview pass at all (pinned OR live/untagged) — lets
+     *  {@code EmoteAnimator} tell a screen's own thumbnail apart from the entity's normal world
+     *  render, so a LOCAL-only menu preview (see {@code EmoteAnimator.Playback#guiPreviewOnly}) can
+     *  never puppet the player's actual on-screen body. See {@link EmotePreviewTagger#beginLive}. */
+    void steampad$setGuiPreviewPass(boolean guiPass);
+
+    boolean steampad$isGuiPreviewPass();
 }

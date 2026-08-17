@@ -1,9 +1,9 @@
 package dev.steampad.client.ui;
 
 import dev.steampad.emote.EmoteData;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.network.chat.Component;
 
 /**
  * A small fixed preview panel showing name/author/duration for whatever emote is currently
@@ -24,7 +24,7 @@ public final class EmotePreviewPanel {
 
     private EmotePreviewPanel() {}
 
-    public static void render(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h, EmoteData data) {
+    public static void render(GuiGraphics ctx, Font tr, int x, int y, int w, int h, EmoteData data) {
         render(ctx, tr, x, y, w, h, data, 0, false);
     }
 
@@ -33,7 +33,7 @@ public final class EmotePreviewPanel {
      *                    animated character preview (see {@code EmoteLibraryScreen}) — 0 for the
      *                    plain text-only panel.
      */
-    public static void render(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h, EmoteData data,
+    public static void render(GuiGraphics ctx, Font tr, int x, int y, int w, int h, EmoteData data,
                               int entityInset) {
         render(ctx, tr, x, y, w, h, data, entityInset, false);
     }
@@ -45,7 +45,7 @@ public final class EmotePreviewPanel {
      *                    otherwise reads as "the preview is broken" (feedback: "en menú ajustes parece
      *                    no funcionar" — a world-less screen genuinely has no player to pose).
      */
-    public static void render(DrawContext ctx, TextRenderer tr, int x, int y, int w, int h, EmoteData data,
+    public static void render(GuiGraphics ctx, Font tr, int x, int y, int w, int h, EmoteData data,
                               int entityInset, boolean noWorldHint) {
         ctx.fill(x, y, x + w, y + h, 0xCC161616);
         ctx.fill(x, y, x + w, y + 1, 0xFF565656);
@@ -55,27 +55,27 @@ public final class EmotePreviewPanel {
 
         int cx = x + w / 2;
         if (data == null) {
-            ctx.drawCenteredTextWithShadow(tr, Text.translatable("steampad.emote.preview.empty"),
+            ctx.drawCenteredString(tr, Component.translatable("steampad.emote.preview.empty"),
                     cx, y + entityInset + (h - entityInset) / 2 - 4, 0xFF888888);
             return;
         }
 
         int ty = y + entityInset + 8;
-        ctx.drawCenteredTextWithShadow(tr, Text.literal(data.name), cx, ty, 0xFFFFFFFF);
+        ctx.drawCenteredString(tr, Component.literal(data.name), cx, ty, 0xFFFFFFFF);
         ty += 13;
         if (data.author != null && !data.author.isBlank()) {
-            ctx.drawCenteredTextWithShadow(tr, Text.literal("— " + data.author), cx, ty, 0xFFAAAAAA);
+            ctx.drawCenteredString(tr, Component.literal("— " + data.author), cx, ty, 0xFFAAAAAA);
             ty += 12;
         }
         ty += 4;
         float seconds = data.totalTicks() / 20f;
         String meta = data.loop
-                ? Text.translatable("steampad.emote.preview.loop").getString()
-                : Text.translatable("steampad.emote.preview.duration", String.format("%.1f", seconds)).getString();
-        ctx.drawCenteredTextWithShadow(tr, Text.literal(meta), cx, ty, 0xFF8CC8A2);
+                ? Component.translatable("steampad.emote.preview.loop").getString()
+                : Component.translatable("steampad.emote.preview.duration", String.format("%.1f", seconds)).getString();
+        ctx.drawCenteredString(tr, Component.literal(meta), cx, ty, 0xFF8CC8A2);
         if (noWorldHint) {
             ty += 14;
-            ctx.drawCenteredTextWithShadow(tr, Text.translatable("steampad.emote.preview.no_world"),
+            ctx.drawCenteredString(tr, Component.translatable("steampad.emote.preview.no_world"),
                     cx, ty, 0xFF777777);
         }
     }

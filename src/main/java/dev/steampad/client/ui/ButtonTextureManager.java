@@ -2,12 +2,11 @@ package dev.steampad.client.ui;
 
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.steam.SteamControllerHandleRef.ControllerType;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.Identifier;
-
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * Resolves per-brand controller button textures (assets/steampad/textures/buttons/&lt;brand&gt;/&lt;stem&gt;.png).
@@ -16,7 +15,7 @@ import java.util.Map;
  * Xbox Elite…) and falls back to {@code generic}. Texture existence is checked once via the resource
  * manager and cached, so a missing PNG cleanly falls back (brand → generic → null, where null means the
  * caller should draw its vector/text glyph). All PNGs are 64×64. Nothing is loaded eagerly — MC's
- * texture manager caches by {@link Identifier} on first draw.
+ * texture manager caches by {@link ResourceLocation} on first draw.
  */
 public final class ButtonTextureManager {
 
@@ -24,23 +23,26 @@ public final class ButtonTextureManager {
     private static final String BASE = "textures/buttons/";
 
     /** Cache of "brand/stem" → Identifier (or absent marker) so existence is checked only once. */
-    private static final Map<String, Identifier> CACHE = new HashMap<>();
-    private static final Identifier MISSING = Identifier.of("steampad", "missing");
+    private static final Map<String, ResourceLocation> CACHE = new HashMap<>();
+    private static final ResourceLocation MISSING = ResourceLocation.fromNamespaceAndPath("steampad", "missing");
 
     private ButtonTextureManager() {}
 
     /** Brand asset folder for the currently active controller (e.g. "xbox", "ps", "steam"). */
     public static String currentBrandFolder() {
         return ActiveControllerService.getActiveRef()
-                .map(r -> brandFolder(r.type, r.displayName))
+                .map(r -> brandFolder(r.type, r.displayName, r.vendorId))
                 .orElse("generic");
     }
 
-    /** Maps a controller type/name to an asset folder, mirroring {@link ControllerBrandIcon}'s resolve. */
-    public static String brandFolder(ControllerType type, String name) {
+    /** Maps a controller type/name/VID to an asset folder, mirroring {@link ControllerBrandIcon}'s
+     *  resolve — {@code vendorId} (0 = unknown) lets a pad whose name doesn't say its brand (e.g. an
+     *  8BitDo in an Xbox-compatible mode) still get the right folder instead of falling to generic. */
+    public static String brandFolder(ControllerType type, String name, int vendorId) {
         String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
         if (n.contains("elite")) return "xbox_elite";
-        if (n.contains("8bitdo") || n.contains("8bit")) return "8bitdo";
+        if (vendorId == dev.steampad.steam.SteamControllerHandleRef.EIGHTBITDO_VENDOR_ID
+                || n.contains("8bitdo") || n.contains("8bit")) return "8bitdo";
         if (n.contains("steam deck") || type == ControllerType.STEAM_DECK) return "steam";
         if (n.contains("dualsense") || n.contains("dualshock") || n.contains("sony")
                 || n.contains("playstation") || type == ControllerType.PLAYSTATION) return "ps";
@@ -69,29 +71,29 @@ public final class ButtonTextureManager {
     }
 
     /** Texture for a button id on the active controller's brand, with generic fallback; null if none. */
-    public static Identifier resolveButton(String id) {
+    public static ResourceLocation resolveButton(String id) {
         String stem = stemFor(id);
         if (stem == null) return null;
-        Identifier brandTex = lookup(currentBrandFolder(), stem);
+        ResourceLocation brandTex = lookup(currentBrandFolder(), stem);
         if (brandTex != null) return brandTex;
         return lookup("generic", stem);
     }
 
     /** Brand silhouette ("controller.png") for a given controller, with generic fallback; null if none. */
-    public static Identifier resolveSilhouette(ControllerType type, String name) {
-        Identifier t = lookup(brandFolder(type, name), "controller");
+    public static ResourceLocation resolveSilhouette(ControllerType type, String name, int vendorId) {
+        ResourceLocation t = lookup(brandFolder(type, name, vendorId), "controller");
         return t != null ? t : lookup("generic", "controller");
     }
 
     /** Returns the Identifier if the PNG exists (cached), else null. */
-    private static Identifier lookup(String folder, String stem) {
+    private static ResourceLocation lookup(String folder, String stem) {
         String key = folder + "/" + stem;
-        Identifier cached = CACHE.get(key);
+        ResourceLocation cached = CACHE.get(key);
         if (cached != null) return cached == MISSING ? null : cached;
-        Identifier id = Identifier.of("steampad", BASE + key + ".png");
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("steampad", BASE + key + ".png");
         boolean exists;
         try {
-            exists = MinecraftClient.getInstance().getResourceManager().getResource(id).isPresent();
+            exists = Minecraft.getInstance().getResourceManager().getResource(id).isPresent();
         } catch (Throwable t) {
             exists = false;
         }

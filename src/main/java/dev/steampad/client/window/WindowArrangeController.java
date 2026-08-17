@@ -1,12 +1,12 @@
 package dev.steampad.client.window;
 
+import com.mojang.blaze3d.platform.Monitor;
+import com.mojang.blaze3d.platform.VideoMode;
+import com.mojang.blaze3d.platform.Window;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.mixin.WindowAccessor;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.Monitor;
-import net.minecraft.client.util.VideoMode;
-import net.minecraft.client.util.Window;
+import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -47,7 +47,7 @@ public final class WindowArrangeController {
      * same timing rule the rest of SteamPad's startup already follows). If the feature was left enabled
      * from a previous session, re-applies the last layout automatically.
      */
-    public static void onFirstTick(MinecraftClient mc) {
+    public static void onFirstTick(Minecraft mc) {
         if (startupApplied) return;
         startupApplied = true;
         if (!ConfigManager.getGlobal().windowArrangeEnabled) return;
@@ -61,14 +61,14 @@ public final class WindowArrangeController {
      * itself stays saved in {@code GlobalConfig.windowArrangeMode} for the next time it's re-enabled.
      */
     public static void setEnabled(boolean enabled) {
-        Window window = MinecraftClient.getInstance().getWindow();
+        Window window = Minecraft.getInstance().getWindow();
         if (enabled) activate(window);
         else deactivate(window);
     }
 
     private static void activate(Window window) {
         baselineFullscreen = window.isFullscreen();
-        baselineWindowed = new WindowBounds(window.getX(), window.getY(), window.getWidth(), window.getHeight());
+        baselineWindowed = new WindowBounds(window.getX(), window.getY(), window.getScreenWidth(), window.getScreenHeight());
         hasBaseline = true;
         WindowArrangeMode saved = ConfigManager.getGlobal().windowArrangeMode;
         current = saved != null ? saved : WindowArrangeMode.WINDOWED;
@@ -79,9 +79,9 @@ public final class WindowArrangeController {
     private static void deactivate(Window window) {
         if (!hasBaseline) return;
         if (baselineFullscreen) {
-            if (!window.isFullscreen()) window.toggleFullscreen();
+            if (!window.isFullscreen()) window.toggleFullScreen();
         } else {
-            if (window.isFullscreen()) window.toggleFullscreen();
+            if (window.isFullscreen()) window.toggleFullScreen();
             reposition(window, baselineWindowed, true);
         }
         hasBaseline = false;
@@ -94,11 +94,11 @@ public final class WindowArrangeController {
      */
     public static void cycle() {
         if (!ConfigManager.getGlobal().windowArrangeEnabled) return;
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         Window window = mc.getWindow();
         if (current == WindowArrangeMode.WINDOWED) {
             // Leaving windowed for the first time this cycle — remember the size/position to return to.
-            savedWindowed = new WindowBounds(window.getX(), window.getY(), window.getWidth(), window.getHeight());
+            savedWindowed = new WindowBounds(window.getX(), window.getY(), window.getScreenWidth(), window.getScreenHeight());
         }
         WindowArrangeMode[] modes = WindowArrangeMode.values();
         current = modes[(current.ordinal() + 1) % modes.length];
@@ -112,18 +112,18 @@ public final class WindowArrangeController {
 
     private static void apply(Window window) {
         if (current.isFullscreen()) {
-            if (!window.isFullscreen()) window.toggleFullscreen();
+            if (!window.isFullscreen()) window.toggleFullScreen();
             return;
         }
         // Exiting fullscreen goes through vanilla's own toggle so its internal state (it tracks a
         // second currentFullscreen flag and does GL/viewport work) stays consistent; only the
         // windowed/tiled bounds below are ever written directly.
-        if (window.isFullscreen()) window.toggleFullscreen();
+        if (window.isFullscreen()) window.toggleFullScreen();
 
         WindowBounds screen = screenBounds(window);
         WindowBounds saved = savedWindowed != null
                 ? savedWindowed
-                : new WindowBounds(window.getX(), window.getY(), window.getWidth(), window.getHeight());
+                : new WindowBounds(window.getX(), window.getY(), window.getScreenWidth(), window.getScreenHeight());
         int gap = Math.max(0, ConfigManager.getGlobal().windowArrangeGap);
         WindowBounds b = current.bounds(screen, saved, gap);
         reposition(window, b, current == WindowArrangeMode.WINDOWED);
@@ -139,7 +139,7 @@ public final class WindowArrangeController {
      * than a monitor-bounds problem).
      */
     private static void reposition(Window window, WindowBounds b, boolean decorated) {
-        long handle = window.getHandle();
+        long handle = dev.steampad.compat.mc.WindowCompat.handle(window);
         GLFW.glfwSetWindowAttrib(handle, GLFW.GLFW_DECORATED, decorated ? GLFW.GLFW_TRUE : GLFW.GLFW_FALSE);
 
         // Window is a final vanilla class — javac can't see the mixin-injected interface statically,
@@ -163,10 +163,10 @@ public final class WindowArrangeController {
     /** The work-area of the monitor the window currently sits on, falling back to the window's own
      *  bounds if no monitor is tracked yet (never divides by zero / places the window off-screen). */
     private static WindowBounds screenBounds(Window window) {
-        Monitor monitor = window.getMonitor();
-        if (monitor == null) return new WindowBounds(window.getX(), window.getY(), window.getWidth(), window.getHeight());
-        VideoMode mode = monitor.getCurrentVideoMode();
-        if (mode == null) return new WindowBounds(window.getX(), window.getY(), window.getWidth(), window.getHeight());
-        return new WindowBounds(monitor.getViewportX(), monitor.getViewportY(), mode.getWidth(), mode.getHeight());
+        Monitor monitor = window.findBestMonitor();
+        if (monitor == null) return new WindowBounds(window.getX(), window.getY(), window.getScreenWidth(), window.getScreenHeight());
+        VideoMode mode = monitor.getCurrentMode();
+        if (mode == null) return new WindowBounds(window.getX(), window.getY(), window.getScreenWidth(), window.getScreenHeight());
+        return new WindowBounds(monitor.getX(), monitor.getY(), mode.getWidth(), mode.getHeight());
     }
 }

@@ -1,9 +1,9 @@
 package dev.steampad.client.ui;
 
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.tooltip.Tooltip;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.network.chat.Component;
 
 /**
  * 20×20 button with a programmatic gamepad icon and "SteamPad Settings" tooltip, injected into the
@@ -19,18 +19,32 @@ import net.minecraft.text.Text;
  * the Options screen's widget tree. Living outside any {@code @Mixin} class means Mixin never
  * touches this class's InnerClasses attribute at all.
  */
-public final class GamepadOptionsButton extends ButtonWidget {
+public final class GamepadOptionsButton extends Button {
 
-    public GamepadOptionsButton(int x, int y, ButtonWidget.PressAction onPress) {
-        super(x, y, 20, 20,
-              Text.translatable("steampad.options.open"),
-              onPress,
-              DEFAULT_NARRATION_SUPPLIER);
-        setTooltip(Tooltip.of(Text.translatable("steampad.options.open")));
+    /** The real label — shown only in the hover tooltip and to screen readers, never painted on the
+     *  button face (see the constructor for why). */
+    private static final Component LABEL = Component.translatable("steampad.options.open");
+
+    public GamepadOptionsButton(int x, int y, Button.OnPress onPress) {
+        // EMPTY message on purpose. A Button paints its message centred on its own face, and when the
+        // text is wider than the button vanilla SCROLLS it (AbstractWidget's scrolling-string path) —
+        // in a 20x20 icon button that showed up as the label sliding back and forth behind the icon
+        // ("aparece en movimiento las letras de ajustes de steampad"). The label still reaches the
+        // player through the tooltip, and screen readers through createNarrationMessage() below, so
+        // nothing is actually lost by not drawing it.
+        super(x, y, 20, 20, Component.empty(), onPress, DEFAULT_NARRATION);
+        setTooltip(Tooltip.create(LABEL));
+    }
+
+    /** Restores the real label for accessibility — the empty render message would otherwise narrate
+     *  this as an unnamed button. */
+    @Override
+    protected net.minecraft.network.chat.MutableComponent createNarrationMessage() {
+        return wrapDefaultNarrationMessage(LABEL);
     }
 
     @Override
-    protected void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+    protected void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta) {
         super.renderWidget(context, mouseX, mouseY, delta); // standard button background
         drawGamepadIcon(context, getX(), getY());
     }
@@ -39,7 +53,7 @@ public final class GamepadOptionsButton extends ButtonWidget {
      * Draws a simple, fully monochrome gamepad silhouette in a 16×16 area at (bx+2, by+2).
      * Uses DrawContext.fill() only — no external texture assets required.
      */
-    private static void drawGamepadIcon(DrawContext ctx, int bx, int by) {
+    private static void drawGamepadIcon(GuiGraphics ctx, int bx, int by) {
         final int GREY = 0xFF888888;
         final int DARK = 0xFF444444;
         final int WHIT = 0xFFCCCCCC;

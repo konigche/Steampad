@@ -2,7 +2,9 @@ package dev.steampad.input;
 
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.CameraType;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * BetterZoom-style FOV zoom, gamepad-native. Static singleton in the style of
@@ -72,46 +74,73 @@ public final class ZoomController {
      */
     public static boolean isButtonRepurposed(ControllerConfig cfg, String button) {
         if (!zooming) return false;
-        if (cfg.zoomDpadAdjust && ("DUP".equals(button) || "DDOWN".equals(button))) return true;
+        if (button == null || button.isEmpty()) return false;
+        // Reads the CONFIGURED zoom-in/out buttons rather than a hardcoded D-pad: move the level
+        // controls to LB/RB and the suppression (and the HUD glyph that shares this method) follows
+        // them on its own, with nothing left claiming the D-pad it no longer uses.
+        if (cfg.zoomDpadAdjust
+                && (button.equals(GamepadBinds.button(cfg, GamepadBinds.Bind.ZOOM_IN))
+                 || button.equals(GamepadBinds.button(cfg, GamepadBinds.Bind.ZOOM_OUT)))) return true;
         return cfg.zoomMarkerEnabled && "A".equals(button);
     }
 
-    /** D-pad step: dir=+1 zooms in (narrower FOV), -1 zooms out. Clamped to [1, options FOV]. */
-    public static void adjust(int dir, ControllerConfig cfg, MinecraftClient mc) {
-        float maxFov = Math.max(2f, mc.options.getFov().getValue());
-        cfg.zoomFov = clamp(cfg.zoomFov - dir * cfg.zoomStep, 1f, maxFov);
+    /** One discrete step: dir=+1 zooms in (narrower FOV), -1 zooms out. Clamped to [1, options FOV]. */
+    public static void adjust(int dir, ControllerConfig cfg, Minecraft mc) {
+        applyDelta(dir * cfg.zoomStep, cfg, mc);
+    }
+
+    /**
+     * Continuous ramp for one tick, used instead of {@link #adjust} while {@code zoomContinuous} is on:
+     * the level slides for as long as the button is held instead of jumping one step per press.
+     *
+     * <p>The rate is derived from {@code zoomStep} rather than a second setting — {@link #STEPS_PER_SEC}
+     * steps per second — so the existing "step size" slider keeps meaning the same thing in both modes
+     * (bigger step = faster ramp) and there is nothing new to tune to get a sane feel.
+     */
+    public static void adjustContinuous(int dir, ControllerConfig cfg, Minecraft mc) {
+        applyDelta(dir * cfg.zoomStep * (STEPS_PER_SEC / 20f), cfg, mc);
+    }
+
+    /** Steps per second the continuous ramp travels. 20 ticks/s is Minecraft's client tick rate. */
+    private static final float STEPS_PER_SEC = 4f;
+
+    private static void applyDelta(float degrees, ControllerConfig cfg, Minecraft mc) {
+        float maxFov = Math.max(2f, mc.options.fov().get());
+        float next = clamp(cfg.zoomFov - degrees, 1f, maxFov);
+        if (next == cfg.zoomFov) return;   // already at the rail: nothing changed, nothing to persist
+        cfg.zoomFov = next;
         levelDirty = true;
     }
 
     /** Per-tick upkeep: refresh the target from config, bobbing suppression, deferred persist. */
-    public static void tick(MinecraftClient mc, ControllerConfig cfg, long handle) {
-        float optionsFov = Math.max(1f, mc.options.getFov().getValue());
+    public static void tick(Minecraft mc, ControllerConfig cfg, long handle) {
+        float optionsFov = Math.max(1f, mc.options.fov().get());
         targetFactor = clamp(cfg.zoomFov / optionsFov, 0.01f, 1f);
         smooth = cfg.zoomSmooth;
         easing = clamp(cfg.zoomSmoothing, 0.05f, 0.30f);
 
         boolean wantBobOff = zooming && cfg.zoomDisableBobbing;
         if (wantBobOff && !bobbingModified) {
-            savedBobbing = mc.options.getBobView().getValue();
-            mc.options.getBobView().setValue(false);
+            savedBobbing = mc.options.bobView().get();
+            mc.options.bobView().set(false);
             bobbingModified = true;
         } else if (!wantBobOff && bobbingModified) {
-            mc.options.getBobView().setValue(savedBobbing);
+            mc.options.bobView().set(savedBobbing);
             bobbingModified = false;
         }
 
         boolean wantViewBoost = zooming && cfg.zoomRenderDistanceBoost > 0;
         if (wantViewBoost && !viewDistanceModified) {
-            savedViewDistance = mc.options.getViewDistance().getValue();
-            savedSimulationDistance = mc.options.getSimulationDistance().getValue();
-            mc.options.getViewDistance().setValue(Math.min(32, savedViewDistance + cfg.zoomRenderDistanceBoost));
-            mc.options.getSimulationDistance().setValue(Math.min(32, savedSimulationDistance + cfg.zoomRenderDistanceBoost));
-            mc.options.sendClientSettings();   // without this the integrated server never sends the extra chunks
+            savedViewDistance = mc.options.renderDistance().get();
+            savedSimulationDistance = mc.options.simulationDistance().get();
+            mc.options.renderDistance().set(Math.min(32, savedViewDistance + cfg.zoomRenderDistanceBoost));
+            mc.options.simulationDistance().set(Math.min(32, savedSimulationDistance + cfg.zoomRenderDistanceBoost));
+            mc.options.broadcastOptions();   // without this the integrated server never sends the extra chunks
             viewDistanceModified = true;
         } else if (!wantViewBoost && viewDistanceModified) {
-            mc.options.getViewDistance().setValue(savedViewDistance);
-            mc.options.getSimulationDistance().setValue(savedSimulationDistance);
-            mc.options.sendClientSettings();
+            mc.options.renderDistance().set(savedViewDistance);
+            mc.options.simulationDistance().set(savedSimulationDistance);
+            mc.options.broadcastOptions();
             viewDistanceModified = false;
         }
 
@@ -122,6 +151,7 @@ public final class ZoomController {
             cfg.zoomFov = sessionBaseFov;
             levelDirty = false;   // nothing to persist — the adjustments were transient by choice
         }
+        if (zooming != wasZooming) tickFirstPersonZoom(mc, cfg, zooming);
         wasZooming = zooming;
 
         if (!zooming && levelDirty) {   // persist the D-pad-adjusted level once, on zoom end
@@ -133,12 +163,12 @@ public final class ZoomController {
     }
 
     // ---- Zoom marker (A while zoomed): a temporary particle beacon at the aimed spot -----------
-    private static net.minecraft.util.math.BlockPos markerPos = null;
+    private static net.minecraft.core.BlockPos markerPos = null;
     private static long markerExpireMs = 0L;
     /** Non-null while the beacon is tracking a LIVING entity instead of a fixed block — the particles
      *  and outline follow it each tick until it dies/unloads or the beacon expires (feedback: "el
      *  marcador también se mueva con el zombie"). */
-    private static net.minecraft.entity.LivingEntity markerEntity = null;
+    private static net.minecraft.world.entity.LivingEntity markerEntity = null;
 
     // How far the raycast reaches when looking for a block to mark. A single raycast is a bounded
     // voxel walk that stops at the edge of loaded chunks anyway (unloaded chunks have no block data
@@ -162,45 +192,45 @@ public final class ZoomController {
      * helper and it never found anything in testing (a zombie directly in the crosshair went
      * undetected); a manual box-vs-ray test is both simpler to reason about and directly verifiable.
      */
-    public static void placeMarker(MinecraftClient mc, ControllerConfig cfg) {
-        if (mc.player == null || mc.world == null) return;
-        var eye = mc.player.getEyePos();
-        var look = mc.player.getRotationVec(1.0f);
-        var end = eye.add(look.multiply(MARKER_RAYCAST_DISTANCE));
+    public static void placeMarker(Minecraft mc, ControllerConfig cfg) {
+        if (mc.player == null || mc.level == null) return;
+        var eye = mc.player.getEyePosition();
+        var look = mc.player.getViewVector(1.0f);
+        var end = eye.add(look.scale(MARKER_RAYCAST_DISTANCE));
 
-        var blockHit = mc.player.raycast(MARKER_RAYCAST_DISTANCE, 1.0f, false);
-        boolean hasBlockHit = blockHit instanceof net.minecraft.util.hit.BlockHitResult
-                && blockHit.getType() != net.minecraft.util.hit.HitResult.Type.MISS;
-        double blockDistSq = hasBlockHit ? eye.squaredDistanceTo(blockHit.getPos()) : Double.MAX_VALUE;
+        var blockHit = mc.player.pick(MARKER_RAYCAST_DISTANCE, 1.0f, false);
+        boolean hasBlockHit = blockHit instanceof net.minecraft.world.phys.BlockHitResult
+                && blockHit.getType() != net.minecraft.world.phys.HitResult.Type.MISS;
+        double blockDistSq = hasBlockHit ? eye.distanceToSqr(blockHit.getLocation()) : Double.MAX_VALUE;
 
         // Manual entity search: every living entity whose (slightly padded) bounding box the sightline
         // ray actually intersects, closest intersection wins.
-        var searchBox = new net.minecraft.util.math.Box(eye, end).expand(2.0);
-        net.minecraft.entity.LivingEntity closestEntity = null;
+        var searchBox = new net.minecraft.world.phys.AABB(eye, end).inflate(2.0);
+        net.minecraft.world.entity.LivingEntity closestEntity = null;
         double closestDistSq = Double.MAX_VALUE;
-        for (var e : mc.world.getOtherEntities(mc.player, searchBox,
-                ent -> ent instanceof net.minecraft.entity.LivingEntity le && le.isAlive() && !ent.isSpectator())) {
-            var hit = e.getBoundingBox().expand(0.3).raycast(eye, end);
+        for (var e : mc.level.getEntities(mc.player, searchBox,
+                ent -> ent instanceof net.minecraft.world.entity.LivingEntity le && le.isAlive() && !ent.isSpectator())) {
+            var hit = e.getBoundingBox().inflate(0.3).clip(eye, end);
             if (hit.isEmpty()) continue;
-            double d = eye.squaredDistanceTo(hit.get());
-            if (d < closestDistSq) { closestDistSq = d; closestEntity = (net.minecraft.entity.LivingEntity) e; }
+            double d = eye.distanceToSqr(hit.get());
+            if (d < closestDistSq) { closestDistSq = d; closestEntity = (net.minecraft.world.entity.LivingEntity) e; }
         }
 
         // Replacing an in-progress entity mark with a new one (or a block mark) — stop glowing the old
         // target so it doesn't stay outlined forever.
-        if (markerEntity != null && markerEntity != closestEntity) markerEntity.setGlowing(false);
+        if (markerEntity != null && markerEntity != closestEntity) markerEntity.setGlowingTag(false);
 
-        net.minecraft.util.math.BlockPos pos;
+        net.minecraft.core.BlockPos pos;
         if (closestEntity != null && closestDistSq < blockDistSq) {
             markerEntity = closestEntity;
-            pos = closestEntity.getBlockPos();
-            closestEntity.setGlowing(true);   // vanilla's own outline render path — cheap, no custom draw code
+            pos = closestEntity.blockPosition();
+            closestEntity.setGlowingTag(true);   // vanilla's own outline render path — cheap, no custom draw code
         } else {
             markerEntity = null;
             if (hasBlockHit) {
-                pos = ((net.minecraft.util.hit.BlockHitResult) blockHit).getBlockPos().toImmutable();
+                pos = ((net.minecraft.world.phys.BlockHitResult) blockHit).getBlockPos().immutable();
             } else {
-                pos = net.minecraft.util.math.BlockPos.ofFloored(end);
+                pos = net.minecraft.core.BlockPos.containing(end);
             }
         }
         markerPos = pos;
@@ -208,9 +238,9 @@ public final class ZoomController {
                 + (long) (Math.max(2f, Math.min(15f, cfg.zoomMarkerSeconds)) * 1000L);
         markerStyle = cfg.zoomMarkerStyle == null ? ControllerConfig.ZoomMarkerStyle.COLUMN : cfg.zoomMarkerStyle;
         markerColor = cfg.zoomMarkerColor == null ? ControllerConfig.ZoomMarkerColor.CYAN : cfg.zoomMarkerColor;
-        if (cfg.zoomMarkerShareChat && mc.player.networkHandler != null) {
+        if (cfg.zoomMarkerShareChat && mc.player.connection != null) {
             // A plain chat line is the only thing OTHER players can actually see from a client mod.
-            mc.player.networkHandler.sendChatMessage(
+            mc.player.connection.sendChat(
                     "[📍] " + markerPos.getX() + " " + markerPos.getY() + " " + markerPos.getZ());
         }
     }
@@ -232,69 +262,79 @@ public final class ZoomController {
      * sparkle so the beacon can actually take on the configured color; constructor verified against
      * the 1.21.10 mapped jar: {@code DustParticleEffect(int packedRgb, float scale)}.
      */
-    private static void tickMarker(MinecraftClient mc) {
+    private static void tickMarker(Minecraft mc) {
         if (markerPos == null) return;
         if (System.currentTimeMillis() > markerExpireMs) {
             markerPos = null;
-            if (markerEntity != null) { markerEntity.setGlowing(false); markerEntity = null; }
+            if (markerEntity != null) { markerEntity.setGlowingTag(false); markerEntity = null; }
             return;
         }
-        if (mc.world == null) return;
+        if (mc.level == null) return;
         // Live-follow: if the beacon is tracking an entity, recompute its position every tick instead
         // of the frozen snapshot (feedback: "el marcador también se mueva con el zombie o mob"). If it
         // died, unloaded, or left the world since the last tick, fall back to a frozen beacon at its
         // last known spot rather than crashing or vanishing abruptly.
         if (markerEntity != null) {
-            if (!markerEntity.isAlive() || markerEntity.getEntityWorld() != mc.world) {
-                markerEntity.setGlowing(false);
+            if (!markerEntity.isAlive() || markerEntity.level() != mc.level) {
+                markerEntity.setGlowingTag(false);
                 markerEntity = null;
             } else {
-                markerPos = markerEntity.getBlockPos();
+                markerPos = markerEntity.blockPosition();
             }
         }
         // Feedback: "puede ser más brillante?" — DustParticleEffect has no glow/HDR knob, so the two
         // levers that read as "brighter" are bigger particles (scale 1.2 -> 2.0) and denser spawning
         // (every tick instead of every other) — doubles the on-screen particle count for the same
         // beacon lifetime.
-        var dust = new net.minecraft.particle.DustParticleEffect(markerColor.rgb, 2.0f);
-        boolean openAbove = mc.world.getBlockState(markerPos.up()).isAir();
+        // DustParticleOptions took a Vector3f colour before 1.21.2 and a packed ARGB int after.
+        //? if >=1.21.2 {
+        var dust = new net.minecraft.core.particles.DustParticleOptions(markerColor.rgb, 2.0f);
+        //?} else {
+        /*var dust = new net.minecraft.core.particles.DustParticleOptions(
+                new org.joml.Vector3f(
+                        ((markerColor.rgb >> 16) & 0xFF) / 255f,
+                        ((markerColor.rgb >> 8) & 0xFF) / 255f,
+                        (markerColor.rgb & 0xFF) / 255f),
+                2.0f);
+        *///?}
+        boolean openAbove = mc.level.getBlockState(markerPos.above()).isAir();
         double dir = openAbove ? 1.0 : -1.0;
         double x = markerPos.getX() + 0.5, z = markerPos.getZ() + 0.5;
         double y = openAbove ? markerPos.getY() + 1.0 : markerPos.getY();
         switch (markerStyle) {
             case SHORT_COLUMN -> {
                 for (int i = 0; i <= 4; i += 1) {
-                    mc.world.addParticleClient(dust, x, y + i * dir, z, 0.0, 0.02 * dir, 0.0);
+                    mc.level.addParticle(dust, x, y + i * dir, z, 0.0, 0.02 * dir, 0.0);
                 }
             }
             case RING -> {
                 int points = 12;
                 for (int i = 0; i < points; i++) {
                     double a = (2 * Math.PI * i) / points;
-                    mc.world.addParticleClient(dust,
+                    mc.level.addParticle(dust,
                             x + Math.cos(a) * 0.6, y, z + Math.sin(a) * 0.6, 0.0, 0.0, 0.0);
                 }
             }
-            case BURST -> mc.world.addParticleClient(dust, x, y, z, 0.0, 0.05 * dir, 0.0);
+            case BURST -> mc.level.addParticle(dust, x, y, z, 0.0, 0.05 * dir, 0.0);
             case COLUMN -> {
                 for (int i = 0; i <= 14; i += 2) {
-                    mc.world.addParticleClient(dust, x, y + i * dir, z, 0.0, 0.02 * dir, 0.0);
+                    mc.level.addParticle(dust, x, y + i * dir, z, 0.0, 0.02 * dir, 0.0);
                 }
             }
         }
     }
 
     /** Hard off (controller vanished / GUI opened in hold mode): stop zooming, restore bobbing. */
-    public static void deactivate(MinecraftClient mc) {
+    public static void deactivate(Minecraft mc) {
         zooming = false;
         if (bobbingModified && mc != null) {
-            mc.options.getBobView().setValue(savedBobbing);
+            mc.options.bobView().set(savedBobbing);
             bobbingModified = false;
         }
         if (viewDistanceModified && mc != null) {
-            mc.options.getViewDistance().setValue(savedViewDistance);
-            mc.options.getSimulationDistance().setValue(savedSimulationDistance);
-            mc.options.sendClientSettings();
+            mc.options.renderDistance().set(savedViewDistance);
+            mc.options.simulationDistance().set(savedSimulationDistance);
+            mc.options.broadcastOptions();
             viewDistanceModified = false;
         }
     }
@@ -350,9 +390,9 @@ public final class ZoomController {
      * frame from the same {@code HudRenderCallback} the rest of SteamPad's HUD uses. Off (0 cost
      * beyond the toggle check) unless {@code ControllerConfig.zoomCinematicBars} is enabled.
      */
-    public static void renderCinematicBars(net.minecraft.client.gui.DrawContext ctx) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen != null) return;
+    public static void renderCinematicBars(net.minecraft.client.gui.GuiGraphics ctx) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen != null) return;
         long handle = dev.steampad.service.ActiveControllerService.getActiveHandle();
         if (handle == 0L) return;
         ControllerConfig cfg = dev.steampad.config.ConfigManager.getControllerConfig(handle);
@@ -372,11 +412,141 @@ public final class ZoomController {
         else if (barProgress > target) barProgress = Math.max(target, barProgress - step);
         if (barProgress <= 0f) return;
 
-        int w = ctx.getScaledWindowWidth();
-        int h = ctx.getScaledWindowHeight();
+        int w = ctx.guiWidth();
+        int h = ctx.guiHeight();
         int barH = Math.round(h * (clamp(cfg.zoomCinematicBarsHeightPct, 5f, 20f) / 100f) * barProgress);
         if (barH <= 0) return;
         ctx.fill(0, 0, w, barH, 0xFF000000);
         ctx.fill(0, h - barH, w, h, 0xFF000000);
+    }
+
+    // ---- shooter-style zoom: ease to first person and back (opt-in, cfg.zoomFirstPerson) ----------
+    // Feature request: "cuando hago zoom en tercera persona que se pase a primera persona, que solo
+    // afecte cuando esté de espalda o la primera opción de tercera persona" — i.e. never in mirror/
+    // front-view, where the camera facing the player IS the point of that mode.
+
+    /** True while the CURRENT first-person state was entered by THIS mechanism — so releasing zoom
+     *  knows whether to ease back to third person, versus leaving alone a first-person the player
+     *  reached some other way (plain F5, an emote, the manual PERSPECTIVE cycle bind). */
+    private static boolean ownsFirstPerson = false;
+
+    private static void tickFirstPersonZoom(Minecraft mc, ControllerConfig cfg, boolean nowZooming) {
+        if (!cfg.zoomFirstPerson || mc.player == null) return;
+        if (nowZooming) {
+            // Only from plain back-view — front/mirror keeps its own identity (D123), and if the
+            // player is already in first person there is nothing to transition. Skip if some OTHER
+            // transition (an emote, the manual cycle bind) is already running rather than fight it.
+            if (mc.options.getCameraType() != CameraType.THIRD_PERSON_BACK) return;
+            if (PerspectiveTransition.isActive()) return;
+            PerspectiveTransition.beginExitToFirstPerson(CameraType.THIRD_PERSON_BACK);
+            ownsFirstPerson = true;
+        } else if (ownsFirstPerson) {
+            ownsFirstPerson = false;
+            if (PerspectiveTransition.isActive()) {
+                // The ease-to-first-person from zoom start hasn't landed yet (a quick tap) — the flip
+                // in PerspectiveTransition.tick() is still pending. Cancel outright rather than let a
+                // released zoom still cut to first person a moment later on its own.
+                PerspectiveTransition.cancel();
+            } else if (mc.options.getCameraType() == CameraType.FIRST_PERSON) {
+                // Landed while still zoomed — ease back out, mirroring cyclePerspective's own
+                // "flip immediately on the way out" convention (the body must be visible right away).
+                Vec3 eye = mc.player.getEyePosition();
+                mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
+                PerspectiveTransition.beginEnter(eye);
+            }
+            // else: the player already changed perspective themselves mid-zoom — leave it alone.
+        }
+    }
+
+    // ---- "clean shot" while the bars are closed --------------------------------------------------
+    // Letterbox bars alone still left the hotbar, health, hunger and the held item on screen, which
+    // defeats the point of a cinematic framing ("no guarda la UI ni los objetos de la mano, debe
+    // guardarlo todo"). Hiding both is gated on the SAME barProgress the bars themselves use, so the
+    // three always agree and nothing can be left hidden once the bars retract.
+
+    /** True once the bars are meaningfully closed — the gate for hiding the HUD and the hands. */
+    private static boolean cinematicFramingActive() {
+        return barProgress > 0.05f;
+    }
+
+    /**
+     * Read by {@code ItemInHandRendererMixin} to skip the first-person hand/item pass.
+     *
+     * <p>Covers the ORDINARY zoom too, not only the cinematic-bars mode: arms and the held item stay
+     * planted in the corner of a magnified view where they read as oversized and block the shot
+     * ("quita los brazos en el zoom normal, permanecen cuando se hace zoom"). Only the hands are
+     * affected — the HUD is left alone outside cinematic framing, which is the "puedes dejar lo demás"
+     * part of that request.
+     *
+     * <p>Kept as an OR rather than folding into one flag because the two have different lifetimes:
+     * {@code zooming} flips the instant the bind is released, while the bars ease out over ~0.3s and
+     * must keep the hands hidden for that whole retraction.
+     */
+    public static boolean shouldHideHands() {
+        return zooming || cinematicFramingActive();
+    }
+
+    /** Vanilla's own hideGui setting from before the bars took over, so an F1 the player had set
+     *  themselves is restored rather than clobbered. Mirrors the emote transition's approach. */
+    private static boolean hudHiddenSnapshot = false;
+    private static boolean hudHiddenByBars = false;
+
+    /**
+     * Once per client tick: takes over {@code hideGui} while the cinematic bars are closed and gives
+     * it back exactly as it was afterwards.
+     *
+     * <p>Driven from the client tick rather than the render callback so the restore still happens on
+     * the tick the bars finish retracting even if nothing renders that frame — otherwise a player who
+     * toggled the feature off mid-zoom could be left with a permanently hidden HUD.
+     */
+    public static void tickCinematicHud(Minecraft mc) {
+        boolean active = cinematicFramingActive();
+        if (active && !hudHiddenByBars) {
+            hudHiddenSnapshot = mc.options.hideGui;
+            mc.options.hideGui = true;
+            hudHiddenByBars = true;
+        } else if (!active && hudHiddenByBars) {
+            mc.options.hideGui = hudHiddenSnapshot;
+            hudHiddenByBars = false;
+            resetStabilizer();
+        }
+    }
+
+    // ---- camera stabilizer (feedback: "al mover la cámara pareciera que está sobre un estabilizador")
+    // A steadicam feel: while the bars are closed, look input is eased toward the stick's request
+    // instead of following it 1:1, so pans start and stop softly. Deliberately a MULTIPLIER on the
+    // already-shaped look delta (curve, sensitivity, aim assist are all folded in upstream) rather
+    // than a second smoothing stage, so it can never fight those.
+
+    /** Fraction of the requested look delta applied per tick while stabilized — lower = heavier rig. */
+    private static final double STABILIZER_HALFLIFE_SEC = 0.16;
+    private static double stabYaw = 0.0, stabPitch = 0.0;
+
+    /** True when look input should be run through the stabilizer (bars closed and enabled). */
+    public static boolean stabilizerActive() {
+        return cinematicFramingActive();
+    }
+
+    /**
+     * Eases a per-frame look delta for the steadicam feel. Returns the delta that should actually be
+     * applied this frame; the remainder is carried and released over the following frames, so no input
+     * is lost — a pan ends where the player asked, just more gently.
+     */
+    public static double[] stabilize(double yawDeg, double pitchDeg, double dt) {
+        stabYaw += yawDeg;
+        stabPitch += pitchDeg;
+        double factor = 1.0 - Math.pow(2.0, -dt / STABILIZER_HALFLIFE_SEC);
+        double outYaw = stabYaw * factor;
+        double outPitch = stabPitch * factor;
+        stabYaw -= outYaw;
+        stabPitch -= outPitch;
+        return new double[]{outYaw, outPitch};
+    }
+
+    /** Drops any carried-over stabilizer motion — called when the bars retract so the next zoom
+     *  doesn't start by replaying leftover input. */
+    public static void resetStabilizer() {
+        stabYaw = 0.0;
+        stabPitch = 0.0;
     }
 }

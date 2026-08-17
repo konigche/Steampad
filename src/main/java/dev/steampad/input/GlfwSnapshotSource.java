@@ -1,5 +1,6 @@
 package dev.steampad.input;
 
+import dev.steampad.util.LogUtil;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWGamepadState;
 
@@ -46,7 +47,34 @@ public final class GlfwSnapshotSource {
         }
 
         // No gamepad mapping — read raw and apply a best-effort DirectInput-style layout.
+        //
+        // This path GUESSES the button order, so a pad that lands here has its controls in the wrong
+        // places (the reported "LB queda para tercera persona, RB para menu" after switching a pad off
+        // and on again). Until now it was completely silent, which is why several rounds of fixes had
+        // no evidence to work from: the log looked healthy while the pad was being read through a
+        // layout nobody chose. Warned once per joystick slot, naming the pad, so the next log says
+        // outright which controller fell off the mapped path and when.
+        if (rawWarned.add(jid)) {
+            String nm;
+            try { nm = GLFW.glfwGetJoystickName(jid); } catch (Throwable t) { nm = null; }
+            LogUtil.warn("[SteamPad] '{}' (GLFW slot {}) has NO gamepad mapping — its buttons are being "
+                    + "GUESSED with a generic DirectInput layout, so they will NOT match what you "
+                    + "configured. This is what \"los botones quedan locos\" looks like from the inside. "
+                    + "It means the pad came back on the GLFW path instead of SDL3's. Runtime detected: "
+                    + "{}. Restarting the game with the pad already switched on restores the correct "
+                    + "mapping. Please report this line — it identifies which pad and when.",
+                    nm == null || nm.isBlank() ? ("joystick " + (jid + 1)) : nm, jid,
+                    dev.steampad.platform.LinuxRuntimeInspector.containerName());
+        }
         return readRaw(jid, out);
+    }
+
+    /** GLFW slots already warned about the unmapped raw path, so the warning can't spam per frame. */
+    private static final java.util.Set<Integer> rawWarned = new java.util.HashSet<>();
+
+    /** Clears the once-per-slot warning latch so a re-plug can report again. */
+    public static void forgetRawWarning(int jid) {
+        rawWarned.remove(jid);
     }
 
     private static boolean readRaw(int jid, GamepadSnapshot out) {

@@ -1,8 +1,8 @@
 package dev.steampad.service;
 
 import dev.steampad.steam.SteamRuntimeDiagnostics;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 
 /**
  * Generates the debug dump and copies it to the system clipboard.
@@ -13,11 +13,11 @@ public final class ClipboardDebugService {
 
     public static void copyToClipboard() {
         String dump = SteamRuntimeDiagnostics.generateDump();
-        MinecraftClient mc = MinecraftClient.getInstance();
-        mc.keyboard.setClipboard(dump);
+        Minecraft mc = Minecraft.getInstance();
+        mc.keyboardHandler.setClipboard(dump);
         if (mc.player != null) {
-            mc.player.sendMessage(
-                Text.literal("§a[SteamPad] §f").append(Text.translatable("steampad.notification.debug_copied")),
+            mc.player.displayClientMessage(
+                Component.literal("§a[SteamPad] §f").append(Component.translatable("steampad.notification.debug_copied")),
                 true
             );
         }

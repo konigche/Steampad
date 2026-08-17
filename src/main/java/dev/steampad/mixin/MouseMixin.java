@@ -4,8 +4,8 @@ import dev.steampad.input.InputRouter;
 import dev.steampad.input.VirtualMouseController;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.Mouse;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.MouseHandler;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -24,13 +24,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *   <li>in gameplay (no screen), never cancel — the mouse stays usable for aiming.</li>
  * </ul>
  */
-@Mixin(Mouse.class)
+@Mixin(MouseHandler.class)
 public abstract class MouseMixin {
 
     private static double steampad$lastPhysX = Double.NaN;
     private static double steampad$lastPhysY = Double.NaN;
 
-    @Inject(method = "onCursorPos", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "onMove", at = @At("HEAD"), cancellable = true)
     private void steampad$routeCursor(long window, double x, double y, CallbackInfo ci) {
         if (VirtualMouseController.INJECTING) return;   // our own virtual move — always allow
                                                         // (counted at the injection site, not here)
@@ -42,10 +42,11 @@ public abstract class MouseMixin {
         steampad$lastPhysY = y;
         boolean realMove = (dx * dx + dy * dy) > 9.0;   // >3px → a deliberate user movement (filters jitter)
 
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
 
         if (realMove) {
             dev.steampad.input.MouseEventStats.recordExternalMove(dx, dy);
+
 
             // D098 — the persistent "el mouse virtual laggea, solo con el 8BitDo" bug, mechanism
             // finally traced end-to-end in code: while the user is ACTIVELY steering the virtual
@@ -61,7 +62,7 @@ public abstract class MouseMixin {
             // swallow the concurrent motion (counted + throttle-logged as evidence). A real human
             // mouse still takes over instantly the moment the stick is released (≤1 tick), and a
             // physical mouse CLICK always wins immediately (onMouseButton below, unchanged).
-            if (mc.currentScreen != null
+            if (mc.screen != null
                     && VirtualMouseController.isShown()
                     && VirtualMouseController.isMovingByStick()) {
                 long steeringHandle = ActiveControllerService.getActiveHandle();
@@ -89,7 +90,7 @@ public abstract class MouseMixin {
 
         // Tiny/ghost move. Only suppress it inside a screen while the controller owns input, and only
         // when the controller cursor is active — so it can't ghost-hover or eat clicks.
-        if (mc.currentScreen == null) return;            // gameplay: never suppress the mouse
+        if (mc.screen == null) return;            // gameplay: never suppress the mouse
         if (!InputRouter.isGamepad()) return;            // mouse is the active device → allow
 
         long handle = ActiveControllerService.getActiveHandle();
@@ -100,26 +101,89 @@ public abstract class MouseMixin {
         }
     }
 
+    /**
+     * Physical mouse look, in third person with free-look on, steers the FREE CAMERA instead of the
+     * player's body — the exact mirror of what the right stick already does in
+     * {@code CameraController.applyLook} ({@code if (freeLook) turnFreeCamera(...) else player.turn(...)}).
+     *
+     * <p>Reported as "el mouse sigue sin mover la camara en tercera persona cuando esta activado
+     * Mejor camara libre... la cabeza del personaje si sigue donde deberia". That description is
+     * precisely the symptom: free-look decouples the camera's own yaw/pitch (freeYaw/freePitch) from
+     * the player's rotation, and only {@code turnFreeCamera} moves them. Vanilla's mouse path never
+     * called it, so the mouse turned the body (visible as the head following) while the detached
+     * camera stayed put.
+     *
+     * <p>This is redirected at {@code turnPlayer}, NOT at {@code onMove}: {@code turnPlayer(double)}
+     * is where vanilla actually applies accumulated mouse look, ending in
+     * {@code LocalPlayer.turn(DD)} — confirmed by disassembling both mapped jars, where the method is
+     * {@code private void turnPlayer(double)} calling {@code LocalPlayer.turn:(DD)V} in each. An
+     * earlier attempt hooked {@code onMove} instead, which both double-applied and silently dropped
+     * most motion (that path filters out deltas under 3px as jitter), and did nothing at all.
+     *
+     * <p>{@code Entity.turn} multiplies its arguments by 0.15 to get degrees, which is the same
+     * {@code LOOK_UNIT} constant {@code CameraController} already divides by — so the conversion here
+     * is that same factor, keeping mouse sensitivity identical to what vanilla would have applied.
+     * When free-look is not driving the camera this redirect calls the original method unchanged, so
+     * first person, mirror mode and every non-free-look case behave exactly as before.
+     */
+    @Redirect(method = "turnPlayer",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/player/LocalPlayer;turn(DD)V"))
+    private void steampad$mouseTurnsFreeCamera(net.minecraft.client.player.LocalPlayer player,
+                                               double cursorDeltaX, double cursorDeltaY) {
+        Minecraft mc = Minecraft.getInstance();
+        // D171: mounted excluded here too, same reason as CameraController.frame — physical mouse
+        // must keep steering a mount via player.turn(), not the free camera, even though isMounted()
+        // is now also one of the reasons isFreeLookEnabled() itself can be true.
+        boolean freeLook = dev.steampad.input.ThirdPersonCameraController.isFreeLookEnabled()
+                && mc.options != null && !mc.options.getCameraType().isFirstPerson()
+                && !dev.steampad.input.ThirdPersonCameraController.isMirrorMode(mc)
+                && !dev.steampad.input.ThirdPersonCameraController.isMounted(mc);
+        if (freeLook) {
+            // 0.15 = Entity.turn's own internal degrees-per-unit factor (CameraController.LOOK_UNIT).
+            dev.steampad.input.ThirdPersonCameraController.turnFreeCamera(
+                    cursorDeltaX * 0.15, cursorDeltaY * 0.15);
+            return;
+        }
+        player.turn(cursorDeltaX, cursorDeltaY);   // untouched vanilla path
+    }
+
     // Controlify-style out-of-focus grab: vanilla lockCursor() bails when the window is unfocused,
     // so closing a menu with the gamepad in the background left the cursor permanently free (any
     // physical click then landed outside the window → more focus loss). With "Out of Focus Input"
     // enabled and a fallback pad active, the lock proceeds; GLFW applies the capture on focus regain.
-    @Redirect(method = "lockCursor",
+    @Redirect(method = "grabMouse",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/MinecraftClient;isWindowFocused()Z"))
-    private boolean steampad$lockCursorFocusCheck(MinecraftClient client) {
-        return client.isWindowFocused() || dev.steampad.input.PauseGate.allowLockCursorUnfocused();
+                    target = "Lnet/minecraft/client/Minecraft;isWindowActive()Z"))
+    private boolean steampad$lockCursorFocusCheck(Minecraft client) {
+        return client.isWindowActive() || dev.steampad.input.PauseGate.allowLockCursorUnfocused();
     }
 
     // A physical mouse-button press is an unambiguous human mouse action: flip the active device to
     // MOUSE immediately (bypassing the gamepad-hold window) and have the AUTO virtual cursor step
     // aside, so at worst ONE click is lost to a desynced pointer — never a whole dead menu. Virtual
     // clicks injected by the mod (ActionExecutor.pressMouseButton) are excluded via INJECTING.
-    @Inject(method = "onMouseButton", at = @At("HEAD"))
-    private void steampad$routeMouseButton(long window, net.minecraft.client.input.MouseInput input,
+    // The callback this injects into was renamed AND reshaped in 1.21.9: onPress(long, int, int, int)
+    // became onButton(long, MouseButtonInfo, int). Both the target name and the handler parameters
+    // have to match the version, so the whole injection is conditional; the body is identical.
+    //? if >=1.21.9 {
+    @Inject(method = "onButton", at = @At("HEAD"))
+    private void steampad$routeMouseButton(long window, net.minecraft.client.input.MouseButtonInfo input,
                                            int action, CallbackInfo ci) {
+        steampad$onPhysicalButton(action);
+    }
+    //?} else {
+    /*@Inject(method = "onPress", at = @At("HEAD"))
+    private void steampad$routeMouseButton(long window, int button, int action, int modifiers,
+                                           CallbackInfo ci) {
+        steampad$onPhysicalButton(action);
+    }
+    *///?}
+
+    @org.spongepowered.asm.mixin.Unique
+    private void steampad$onPhysicalButton(int action) {
         if (VirtualMouseController.INJECTING) return;   // mod-injected click, not the physical mouse
-        if (action == org.lwjgl.glfw.GLFW.GLFW_PRESS && MinecraftClient.getInstance().currentScreen != null) {
+        if (action == org.lwjgl.glfw.GLFW.GLFW_PRESS && Minecraft.getInstance().screen != null) {
             InputRouter.markMouseForce();
             VirtualMouseController.onPhysicalMouseTookOver();
         }

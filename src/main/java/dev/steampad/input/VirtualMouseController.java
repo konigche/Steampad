@@ -1,8 +1,8 @@
 package dev.steampad.input;
 
 import dev.steampad.util.MathUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.input.MouseInput;
+import net.minecraft.client.Minecraft;
+import dev.steampad.compat.mc.InputEventCompat;
 
 /**
  * Controller-driven virtual cursor, modeled on Controlify's behaviour.
@@ -52,7 +52,6 @@ public final class VirtualMouseController {
     private static long lastCursorPosNanos = 0L;
     private static float sensitivity = 1.0f;
     /** True if the cursor was nudged by the stick this tick (gates snap so a resting cursor is quiet). */
-    private static boolean movedThisTick = false;
 
     // Per-frame smooth motion: the dispatcher sets a TARGET velocity each tick (20 Hz); frameUpdate()
     // eases the actual velocity toward it and integrates every rendered frame using real delta-time, so
@@ -108,13 +107,6 @@ public final class VirtualMouseController {
     /** Whether the cursor is currently shown (and thus owns the pointer / suppresses physical mouse). */
     public static boolean isShown() { return shown; }
 
-    /** True if the stick moved the cursor this tick (reset by callers after reading). */
-    public static boolean consumeMoved() {
-        boolean m = movedThisTick;
-        movedThisTick = false;
-        return m;
-    }
-
     /** In AUTO, the left stick reveals the cursor (waking it where the physical pointer was). */
     public static void onStickUsed() {
         if (mode == Mode.AUTO && !shown) { shown = true; syncFromOsMouse(); clearScreenFocus(); }
@@ -131,12 +123,12 @@ public final class VirtualMouseController {
 
     /** Snap the virtual position to the current OS pointer (seamless hand-off mouse → stick). */
     private static void syncFromOsMouse() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null || mc.mouse == null) return;
-        double scale = mc.getWindow().getScaleFactor();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null || mc.mouseHandler == null) return;
+        double scale = mc.getWindow().getGuiScale();
         if (scale <= 0) scale = 1;
-        virtualX = MathUtil.clamp(mc.mouse.getX() / scale, 0, mc.currentScreen.width);
-        virtualY = MathUtil.clamp(mc.mouse.getY() / scale, 0, mc.currentScreen.height);
+        virtualX = MathUtil.clamp(mc.mouseHandler.xpos() / scale, 0, mc.screen.width);
+        virtualY = MathUtil.clamp(mc.mouseHandler.ypos() / scale, 0, mc.screen.height);
         lastSentX = virtualX;
         lastSentY = virtualY;
     }
@@ -156,7 +148,7 @@ public final class VirtualMouseController {
      * Called when a screen opens. Restores the mode remembered for this screen's class (default AUTO),
      * so enabling/disabling the cursor in one window doesn't change it in others (item: per-context).
      */
-    public static void onScreenOpened(net.minecraft.client.gui.screen.Screen screen, boolean container) {
+    public static void onScreenOpened(net.minecraft.client.gui.screens.Screen screen, boolean container) {
         currentContext = screen == null ? "" : screen.getClass().getName();
         mode = contextModes.getOrDefault(currentContext, Mode.AUTO);
         switch (mode) {
@@ -209,11 +201,10 @@ public final class VirtualMouseController {
         if (Math.abs(velY) < 1.0 && targetVelY == 0.0) velY = 0.0;
 
         if (!shown || (velX == 0.0 && velY == 0.0)) return false;
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null) return false;
-        virtualX = MathUtil.clamp(virtualX + velX * dt, 0, mc.currentScreen.width);
-        virtualY = MathUtil.clamp(virtualY + velY * dt, 0, mc.currentScreen.height);
-        movedThisTick = true;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) return false;
+        virtualX = MathUtil.clamp(virtualX + velX * dt, 0, mc.screen.width);
+        virtualY = MathUtil.clamp(virtualY + velY * dt, 0, mc.screen.height);
         syncOsCursor();
         return true;
     }
@@ -223,22 +214,26 @@ public final class VirtualMouseController {
         setStick(rawDx, rawDy);
     }
 
-    /** True if the stick is currently deflecting the cursor (used to gate settle-snap). */
+    /** True if the stick is currently deflecting the cursor — used by {@code MouseMixin} to swallow
+     *  the concurrent OS-cursor motion the stick emulation itself produces, so it isn't mistaken for a
+     *  real physical-mouse takeover (see the comment at that call site for the hide/teleport bug this
+     *  prevents). NOT what gates settle-snap — the dispatcher computes that independently from the raw
+     *  stick axes each tick (see {@code GamepadInputDispatcher}'s `moving` local). */
     public static boolean isMovingByStick() { return targetVelX != 0.0 || targetVelY != 0.0; }
 
     public static void setPosition(double x, double y) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null) return;
-        virtualX = MathUtil.clamp(x, 0, mc.currentScreen.width);
-        virtualY = MathUtil.clamp(y, 0, mc.currentScreen.height);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) return;
+        virtualX = MathUtil.clamp(x, 0, mc.screen.width);
+        virtualY = MathUtil.clamp(y, 0, mc.screen.height);
         syncOsCursor();
     }
 
     public static void centerOnScreen() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null) return;
-        virtualX = mc.currentScreen.width / 2.0;
-        virtualY = mc.currentScreen.height / 2.0;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) return;
+        virtualX = mc.screen.width / 2.0;
+        virtualY = mc.screen.height / 2.0;
         syncOsCursor();
     }
 
@@ -270,13 +265,14 @@ public final class VirtualMouseController {
 
     /** Move the real cursor to (x,y) in scaled coords, flagged so the mixin allows this move. */
     private static void moveOsCursor(double x, double y) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.mouse == null) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.mouseHandler == null) return;
         MouseEventStats.recordInjected();
-        double scale = mc.getWindow().getScaleFactor();
+        double scale = mc.getWindow().getGuiScale();
         INJECTING = true;
         try {
-            mc.mouse.onCursorPos(mc.getWindow().getHandle(), x * scale, y * scale);
+            mc.mouseHandler.onMove(
+                    dev.steampad.compat.mc.WindowCompat.handle(mc.getWindow()), x * scale, y * scale);
         } finally {
             INJECTING = false;
         }
@@ -289,9 +285,9 @@ public final class VirtualMouseController {
 
     /** Drops any focused widget so a cursor click doesn't leave a second highlighted element. */
     private static void clearScreenFocus() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc != null && mc.currentScreen != null) {
-            mc.currentScreen.setFocused(null);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.screen != null) {
+            mc.screen.setFocused(null);
         }
     }
 
@@ -328,11 +324,11 @@ public final class VirtualMouseController {
      *  doesn't mistake it for the physical mouse taking over (same {@link #INJECTING} pattern already
      *  used by {@link #moveOsCursor} and {@code ActionExecutor.pressMouseButton}). */
     private static void fireMouseButton(int button, int action) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null || mc.mouse == null) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null || mc.mouseHandler == null) return;
         INJECTING = true;
         try {
-            mc.mouse.onMouseButton(mc.getWindow().getHandle(), new MouseInput(button, 0), action);
+            InputEventCompat.fireMouseButton(mc, button, action);
         } finally {
             INJECTING = false;
         }
@@ -363,8 +359,8 @@ public final class VirtualMouseController {
     }
 
     public static void simulateScroll(double amount) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null) return;
-        mc.currentScreen.mouseScrolled(virtualX, virtualY, 0, amount);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) return;
+        mc.screen.mouseScrolled(virtualX, virtualY, 0, amount);
     }
 }

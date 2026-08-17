@@ -1,38 +1,38 @@
 package dev.steampad.haptics;
 
+import dev.steampad.compat.mc.UseAnimCompat;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.util.LogUtil;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.ChestBlock;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.DeathScreen;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LightningEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.damage.DamageSource;
-import net.minecraft.entity.damage.DamageTypes;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.entity.mob.CreeperEntity;
-import net.minecraft.entity.mob.EndermanEntity;
-import net.minecraft.entity.mob.SkeletonEntity;
-import net.minecraft.entity.mob.SpiderEntity;
-import net.minecraft.entity.mob.WardenEntity;
-import net.minecraft.entity.mob.ZombieEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.registry.tag.DamageTypeTags;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.DeathScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Skeleton;
+import net.minecraft.world.entity.monster.Spider;
+import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.monster.warden.Warden;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Event-driven controller haptics — "does the game vibrate, and for what". Minecraft (both editions)
@@ -90,7 +90,7 @@ public final class HapticsController {
             new HapticPreset("steampad.haptics.test.drowning", Tier.DANGER, Category.PLAYER, 0.55f, 90, 0.3f),
             new HapticPreset("steampad.haptics.test.burning", Tier.DANGER, Category.PLAYER, 0.4f, 90, 0.6f),
             new HapticPreset("steampad.haptics.test.eating", Tier.COSMETIC, Category.PLAYER, 0.14f, 55, 0.7f),
-            new HapticPreset("steampad.haptics.test.slime_walk", Tier.AMBIENT, Category.PLAYER, 0.3f, 200, 0.5f),
+            new HapticPreset("steampad.haptics.test.slime_walk", Tier.AMBIENT, Category.PLAYER, 0.45f, 320, 0.25f),
             new HapticPreset("steampad.haptics.test.honey_walk", Tier.COSMETIC, Category.PLAYER, 0.05f, 60, 0.75f),
             new HapticPreset("steampad.haptics.test.water_splash", Tier.COSMETIC, Category.PLAYER, 0.18f, 70, 0.5f),
             new HapticPreset("steampad.haptics.test.glide", Tier.AMBIENT, Category.PLAYER, 0.1f, 100, 0.55f),
@@ -101,13 +101,13 @@ public final class HapticsController {
             new HapticPreset("steampad.haptics.test.boss_ping", Tier.DANGER, Category.WORLD, 0.65f, 240, 0.15f),
             new HapticPreset("steampad.haptics.test.portal", Tier.DANGER, Category.WORLD, 0.75f, 240, 0.2f),
             new HapticPreset("steampad.haptics.test.explosion", Tier.CRITICAL, Category.WORLD, 0.8f, 375, 0.15f),
-            new HapticPreset("steampad.haptics.test.melee_hit", Tier.IMPACT, Category.INTERACTION, 0.22f, 90, 0.75f),
-            new HapticPreset("steampad.haptics.test.melee_crit", Tier.IMPACT, Category.INTERACTION, 0.45f, 150, 0.75f),
-            new HapticPreset("steampad.haptics.test.weapon_sword", Tier.IMPACT, Category.INTERACTION, 0.22f, 90, 0.7f),
-            new HapticPreset("steampad.haptics.test.weapon_axe", Tier.IMPACT, Category.INTERACTION, 0.3f, 105, 0.45f),
-            new HapticPreset("steampad.haptics.test.weapon_trident", Tier.IMPACT, Category.INTERACTION, 0.32f, 110, 0.25f),
-            new HapticPreset("steampad.haptics.test.weapon_mace", Tier.IMPACT, Category.INTERACTION, 0.5f, 170, 0.15f),
-            new HapticPreset("steampad.haptics.test.weapon_mace_smash", Tier.IMPACT, Category.INTERACTION, 0.85f, 260, 0.05f),
+            new HapticPreset("steampad.haptics.test.melee_hit", Tier.IMPACT, Category.INTERACTION, 0.4f, 140, 0.6f),
+            new HapticPreset("steampad.haptics.test.melee_crit", Tier.IMPACT, Category.INTERACTION, 0.55f, 190, 0.6f),
+            new HapticPreset("steampad.haptics.test.weapon_sword", Tier.IMPACT, Category.INTERACTION, 0.45f, 150, 0.55f),
+            new HapticPreset("steampad.haptics.test.weapon_axe", Tier.IMPACT, Category.INTERACTION, 0.5f, 170, 0.4f),
+            new HapticPreset("steampad.haptics.test.weapon_trident", Tier.IMPACT, Category.INTERACTION, 0.5f, 170, 0.25f),
+            new HapticPreset("steampad.haptics.test.weapon_mace", Tier.IMPACT, Category.INTERACTION, 0.65f, 200, 0.15f),
+            new HapticPreset("steampad.haptics.test.weapon_mace_smash", Tier.IMPACT, Category.INTERACTION, 0.9f, 300, 0.05f),
             new HapticPreset("steampad.haptics.test.weapon_arrow", Tier.IMPACT, Category.INTERACTION, 0.22f, 55, 0.9f),
             new HapticPreset("steampad.haptics.test.weapon_kill", Tier.CRITICAL, Category.INTERACTION, 0.75f, 260, 0.2f),
             new HapticPreset("steampad.haptics.test.block_broken", Tier.IMPACT, Category.INTERACTION, 0.5f, 190, 0.35f),
@@ -179,6 +179,8 @@ public final class HapticsController {
 
     private static long lastSquishyPulseMs = 0L;
     private static long lastSquishyDebugMs = 0L;
+    private static double lastSquishyX = Double.NaN;
+    private static double lastSquishyZ = Double.NaN;
     private static boolean wasTouchingWaterForSplash = false;
     private static long lastGlideRumbleMs = 0L;
     private static long lastBossPingMs = 0L;
@@ -191,7 +193,7 @@ public final class HapticsController {
     private static final Set<Integer> seenLightning = new HashSet<>();
     private static final Map<Integer, Long> creeperIgnitedSinceMs = new HashMap<>();
     private static final Map<Integer, Long> creeperLastPingMs = new HashMap<>();
-    private static final Map<Integer, Vec3d> endermanLastPos = new HashMap<>();
+    private static final Map<Integer, Vec3> endermanLastPos = new HashMap<>();
     /** Session-local (cleared on game restart, not persisted) — "don't ping a chest twice". */
     private static final Set<BlockPos> openedChests = new HashSet<>();
     /**
@@ -202,6 +204,27 @@ public final class HapticsController {
      * a moment mid-fight.
      */
     private static final Set<Integer> engagedBosses = new HashSet<>();
+
+    /**
+     * Entities recently hit by the LOCAL player (entity id → confirmation deadline, wall-clock ms).
+     * A kill can never be decided at hit time on the client — the target's client-side health only
+     * updates when the server answers, one or more ticks AFTER the attack packet left — so every
+     * player-attributed hit arms this window instead, and {@link #pollPendingKills} confirms the
+     * death from the entity's actual (server-replicated) state. See D114.
+     */
+    private static final Map<Integer, Long> recentPlayerHits = new HashMap<>();
+    private static final long KILL_CONFIRM_WINDOW_MS = 800L;
+
+    /**
+     * Dedup between the two melee-hit pulse sources (D115): {@link #onMeleeHit} (the vanilla
+     * {@code attackEntity} mixin — immediate, but bypassed entirely by combat-overhaul mods that
+     * send their own attack packets) and {@link #onEntityDamaged} (the server's damage packet —
+     * 1-2 ticks later, but fires for EVERY hit the player lands no matter what initiated it).
+     * Whichever runs first for a given target claims the pulse; the other stays quiet.
+     */
+    private static int lastMeleePulseTargetId = -1;
+    private static long lastMeleePulseMs = 0L;
+    private static final long MELEE_PULSE_DEDUP_MS = 400L;
 
     // ---- Boss detection heuristic (see #isBossLike) -----------------------------------------
     private static final double BOSS_PING_RANGE = 40.0;
@@ -221,8 +244,8 @@ public final class HapticsController {
     private static boolean wasPaused = false;
 
     /** Call once per client tick (from the main tick handler). */
-    public static void tick(MinecraftClient mc) {
-        if (mc.player == null || mc.world == null) {
+    public static void tick(Minecraft mc) {
+        if (mc.player == null || mc.level == null) {
             resetTransientState();
             return;
         }
@@ -232,7 +255,7 @@ public final class HapticsController {
         // other periodic pulse) kept firing while paused (feedback: "no se detiene la vibracion...
         // al pasar al menu pausa... se deben detener las vibraciones del mando"). Stop whatever is
         // currently buzzing exactly once, on the pause EDGE, then skip polling entirely until resumed.
-        boolean paused = mc.currentScreen instanceof net.minecraft.client.gui.screen.GameMenuScreen;
+        boolean paused = mc.screen instanceof net.minecraft.client.gui.screens.PauseScreen;
         if (paused) {
             if (!wasPaused) stopRumbleNow();
             wasPaused = true;
@@ -245,6 +268,7 @@ public final class HapticsController {
         tickBodyStates(mc);
         tickSquishyUnderfoot(mc);
         tickAquaticAndGliding(mc);
+        pollPendingKills(mc);
 
         tickCounter++;
         if (tickCounter % LIGHTNING_POLL_TICKS == 0) pollLightning(mc);
@@ -264,11 +288,16 @@ public final class HapticsController {
         endermanLastPos.clear();
         engagedBosses.clear();
         wardenEngaged = false;
+        recentPlayerHits.clear();
+        lastSquishyX = Double.NaN;
+        lastSquishyZ = Double.NaN;
+        lastMeleePulseTargetId = -1;
+        lastMeleePulseMs = 0L;
     }
 
     // ---- Body: damage, low-health heartbeat, death -----------------------------------------
 
-    private static void tickDamageAndHealth(MinecraftClient mc) {
+    private static void tickDamageAndHealth(Minecraft mc) {
         float hp = mc.player.getHealth();
         float maxHp = Math.max(1f, mc.player.getMaxHealth());
 
@@ -293,7 +322,22 @@ public final class HapticsController {
                 dur = (int) (dur * hit.durMult());
                 if (hit.tierOverride() != null) tier = hit.tierOverride();
             }
-            fire(tier, Category.PLAYER, mag, dur, freqBalance);
+            // Diagnostics (feedback: "cuando recibo daño de un jugador o mob ya no vibro, cuando hago
+            // daño si") — mirrors the melee-hit diagnostic line so a future report can tell "never
+            // reached fire()" (nothing prints — tick/health-poll problem) from "reached it but
+            // blocked" (canFire/config) from "hardware rejected it" (rumbleAccepted=false).
+            long dmgHandle = ActiveControllerService.getActiveHandle();
+            ControllerConfig dmgCfg = dmgHandle != 0L ? ConfigManager.getControllerConfig(dmgHandle) : null;
+            boolean dmgPreCanFire = canFire(tier);
+            boolean dmgAccepted = fire(tier, Category.PLAYER, mag, dur, freqBalance);
+            LogUtil.debug("[SteamPad][haptics-damage-taken] delta={} tier={} mag={} dur={} handle={} "
+                            + "allowVibration={} vibrationPlayer={} vibrationMaster={} canFireBefore={} "
+                            + "occupyingTierBefore={} rumbleAccepted={}",
+                    delta, tier, mag, dur, dmgHandle,
+                    dmgCfg != null && dmgCfg.allowVibration,
+                    dmgCfg != null ? dmgCfg.vibrationPlayer : -1f,
+                    dmgCfg != null ? dmgCfg.vibrationMaster : -1f,
+                    dmgPreCanFire, occupyingTier(), dmgAccepted);
             // Getting hit deserves the same visual punch as landing one — "juice" cuts both ways.
             dev.steampad.input.JuiceController.shake(mag * 0.13, dur);
             dev.steampad.input.JuiceController.fovKick(mag * 0.1f);
@@ -312,15 +356,15 @@ public final class HapticsController {
             }
         }
 
-        boolean isDeathScreen = mc.currentScreen instanceof DeathScreen;
+        boolean isDeathScreen = mc.screen instanceof DeathScreen;
         if (isDeathScreen && !wasDeathScreen) fire(Tier.CRITICAL, Category.PLAYER, 0.85f, 450, 0.2f);
         wasDeathScreen = isDeathScreen;
     }
 
     // ---- Body: fall + landing impact (independent of whether it actually damaged you) -------
 
-    private static void tickFallImpact(MinecraftClient mc) {
-        if (!mc.player.isOnGround()) {
+    private static void tickFallImpact(Minecraft mc) {
+        if (!mc.player.onGround()) {
             maxFallSeen = Math.max(maxFallSeen, mc.player.fallDistance);
             wasOnGroundForFall = false;
             return;
@@ -330,24 +374,31 @@ public final class HapticsController {
         double fell = maxFallSeen;
         maxFallSeen = 0.0;
         if (fell < 3.0) return;   // skip steps/tiny hops
-        boolean cushioned = mc.player.isTouchingWater();
+        boolean cushioned = mc.player.isInWater();
         float mag = cushioned
                 ? (float) clamp(fell / 40.0, 0.08, 0.3)
                 : (float) clamp(fell / 12.0, 0.2, 0.9);
         int dur = (int) clamp(150 + fell * 8, 150, 380);
         fire(Tier.IMPACT, Category.PLAYER, mag, dur, cushioned ? 0.45f : 0.1f);   // water = softer/duller
-        if (!cushioned) dev.steampad.input.JuiceController.shake(mag * 0.12, dur);   // splash landing stays visually calm
+        // Juice bumped this round (feedback: "subele la intensidad, sobre todo cuando cae de un lugar
+        // alto") — falls previously only shook the camera (0.12x, no FOV punch at all); a hard landing
+        // from height is meant to be the biggest "juice" moment in the vocabulary, on par with a kill,
+        // so both the shake multiplier and a genuine fovKick (missing entirely before) now scale with it.
+        if (!cushioned) {
+            dev.steampad.input.JuiceController.shake(mag * 0.22, dur);   // splash landing stays visually calm
+            dev.steampad.input.JuiceController.fovKick(mag * 0.16f);
+        }
     }
 
     // ---- Body: hunger, freezing, drowning ---------------------------------------------------
 
-    private static void tickBodyStates(MinecraftClient mc) {
+    private static void tickBodyStates(Minecraft mc) {
         long now = System.currentTimeMillis();
 
         // Hunger critical: the same threshold vanilla uses to disable sprinting — a meaningful
         // in-game line, not an arbitrary number. Spaced further apart than the health heartbeat so
         // the two are never confused for one another.
-        if (mc.player.getHungerManager().getFoodLevel() <= 6) {
+        if (mc.player.getFoodData().getFoodLevel() <= 6) {
             if (now - lastHungerPulseMs > 1400L) {
                 lastHungerPulseMs = now;
                 fire(Tier.AMBIENT, Category.PLAYER, 0.22f, 70, 0.55f);
@@ -356,7 +407,7 @@ public final class HapticsController {
 
         // Freezing (powder snow): an irregular shiver, not a clean rhythm — randomized interval and
         // intensity so it reads as "trembling", not "ticking".
-        if (mc.player.isFrozen()) {
+        if (mc.player.isFullyFrozen()) {
             long interval = 480L + ThreadLocalRandom.current().nextInt(420);
             if (now - lastFreezePulseMs > interval) {
                 lastFreezePulseMs = now;
@@ -367,9 +418,9 @@ public final class HapticsController {
 
         // Drowning: accelerating panic pulses as air runs out, mirroring the vanilla bubble UI going
         // critical instead of replacing it.
-        if (mc.player.isSubmergedInWater()) {
-            int air = mc.player.getAir();
-            int maxAir = Math.max(1, mc.player.getMaxAir());
+        if (mc.player.isUnderWater()) {
+            int air = mc.player.getAirSupply();
+            int maxAir = Math.max(1, mc.player.getMaxAirSupply());
             float lowFrac = 1f - clamp((float) air / (maxAir / 3f), 0f, 1f);   // ramps up in the last third
             if (lowFrac > 0f) {
                 long interval = (long) (700 - lowFrac * 550);
@@ -392,9 +443,7 @@ public final class HapticsController {
         // Eating/drinking: soft munch pulses matching the chew cadence while the item is consumed —
         // cosmetic texture, never competes with anything that matters.
         if (mc.player.isUsingItem()) {
-            var action = mc.player.getActiveItem().getUseAction();
-            if (action == net.minecraft.item.consume.UseAction.EAT
-                    || action == net.minecraft.item.consume.UseAction.DRINK) {
+            if (UseAnimCompat.isConsuming(mc.player.getUseItem())) {
                 if (now - lastEatPulseMs > 260L) {
                     lastEatPulseMs = now;
                     fire(Tier.COSMETIC, Category.PLAYER, 0.14f, 55, 0.7f);
@@ -413,63 +462,69 @@ public final class HapticsController {
      * Scoped to slime ONLY (feedback: "solo en slime") — honey keeps its original, gentler occasional
      * tick below, unreported and unchanged this round.
      *
-     * <p>The first attempt (90ms cadence, 0.045 magnitude) was still too weak/gappy to actually
-     * register (feedback: "no se siente") — this version fires every client tick (~50ms) with a pulse
-     * duration (140ms) well past the next tick, so consecutive {@code rumble()} calls overlap into one
-     * seamless buzz instead of a series of taps, at a magnitude (0.13) in line with other perceptible
-     * ambient cues (eating is 0.14) — still clearly softer than an actual bounce/landing impact, which
-     * goes through the generic fall path ({@link #tickFallImpact}, 0.2-0.9) — feedback: "que sea mas
-     * baja la vibracion [al caminar] al de saltar rebotar".
+     * <p><b>Standing still on slime stays silent</b> (approved behavior: "cuando esta quieto debe de
+     * dejar de vibrar aunque estemos encima del slime") — the hum is moving-only.</p>
+     *
+     * <p><b>D114 — root cause of "la primera vez vibra, despues cuando sigo caminando ya no lo hace"
+     * found and fixed, superseding D113's wireless-rumble hypothesis</b> (refuted by the user's own
+     * evidence: every haptic test preset — same {@code fire()} path, same sliders — IS felt on this
+     * pad, so the pipeline works and the trigger was the broken half). The old gate was
+     * {@code isOnGround() && getVelocity().horizontalLengthSquared() >= 0.003}: the FIRST step onto
+     * slime passes it (normal-ground speed carried in, ground state still clean), but SUSTAINED
+     * walking on a block that both slows the entity and micro-bounces it makes velocity/onGround
+     * flicker under those thresholds, so the hum died right after the first pulse — exactly the
+     * report. The gate is now the actual per-tick horizontal POSITION delta (ground truth for "am I
+     * moving", however the movement happened), with a deeper block probe and no hard onGround
+     * requirement. Magnitude also raised to this pad's established in-gameplay perceptibility floor
+     * (0.45/320ms low-motor-biased; the felt-once pulse was 0.3/300).</p>
      */
-    private static void tickSquishyUnderfoot(MinecraftClient mc) {
-        boolean onGround = mc.player.isOnGround();
-        // NOT mc.player.getBlockPos().down() — that floors the player's LIVE Y first, and while
-        // actually walking (as opposed to standing perfectly still) the feet Y sits at exactly the
-        // block boundary (e.g. 65.0 on a block at y=64) with floating-point noise on either side of
-        // it depending on the exact sub-tick moment sampled; floor(64.999999) lands ONE BLOCK BELOW
-        // the block actually being stood on. That flicker would make the slime check intermittently
-        // (often mostly) miss real slime blocks during movement — matching the report exactly: the
-        // Haptics Test Screen preset (same tier/intensity/duration) is felt fine on demand, but real
-        // walking on slime isn't, meaning the trigger never reliably fires, not that the rumble itself
-        // is too weak. Same epsilon vanilla itself uses internally for "what am I standing on".
-        BlockPos underfootPos = BlockPos.ofFloored(mc.player.getX(), mc.player.getY() - 0.2, mc.player.getZ());
-        Block underfoot = mc.world.getBlockState(underfootPos).getBlock();
-        double speedSq = mc.player.getVelocity().horizontalLengthSquared();
+    private static void tickSquishyUnderfoot(Minecraft mc) {
+        // Actual horizontal displacement since the previous tick — ground truth for "am I moving",
+        // measured from position, not velocity. getVelocity() proved untrustworthy exactly here
+        // (D114): the first step onto slime still carries normal-ground speed (that pulse fired),
+        // while SUSTAINED walking on a slowing, micro-bouncing block reads low/flickering, so the
+        // velocity gate killed every pulse after the first. Position delta doesn't care HOW the
+        // movement happened.
+        double px = mc.player.getX(), pz = mc.player.getZ();
+        double movedSq;
+        if (Double.isNaN(lastSquishyX)) {
+            movedSq = 0.0;
+        } else {
+            double dx = px - lastSquishyX, dz = pz - lastSquishyZ;
+            movedSq = dx * dx + dz * dz;
+            if (movedSq > 1.0) movedSq = 0.0;   // teleport/dimension jump — not walking
+        }
+        lastSquishyX = px;
+        lastSquishyZ = pz;
+
+        // Probe 0.35 under the live feet Y (was 0.2, and NOT getBlockPos().down() — see D114 and the
+        // old flicker analysis it extends): deep enough that the micro-hops slime itself causes while
+        // being walked on can't flick the check onto air, shallow enough that genuinely jumping off
+        // the slime stops the hum within a tick or two. Same reasoning removes the old hard
+        // isOnGround() gate — the probe depth already bounds how far off the block you can be.
+        BlockPos underfootPos = BlockPos.containing(px, mc.player.getY() - 0.35, pz);
+        Block underfoot = mc.level.getBlockState(underfootPos).getBlock();
         long now = System.currentTimeMillis();
 
-        // Diagnostics (feedback, 4th+ reported round: "esto nos esta dando muchisimos problemas"):
-        // three magnitude/cadence rounds (0.045→0.13→0.3, all comfortably above the ~0.02-0.05 raw
-        // range confirmed perceptible by the radial-select pulse, D070) still read as "nothing" on
-        // real hardware. Unthrottled per-attempt confirmation plus a 1/sec state dump — between the
-        // two, the next hardware test's log settles definitively whether this is a detection bug
-        // (neither line ever prints), a channel-arbitration bug (the state dump shows canFireAmbient
-        // false), or a hardware/driver floor (the "firing" line prints every time and it's STILL not
-        // felt, at which point no further code change here can help).
         if (underfoot == Blocks.SLIME_BLOCK && now - lastSquishyDebugMs > 1000L) {
             lastSquishyDebugMs = now;
-            LogUtil.debug("[SteamPad] Slime underfoot: onGround={} speedSq={} (moving-hum needs >=0.003) "
-                            + "canFireAmbient={}", onGround, speedSq, canFire(Tier.AMBIENT));
+            LogUtil.debug("[SteamPad] Slime underfoot: movedSq={} (moving-hum needs >=0.0005) "
+                            + "canFireAmbient={} lastRumbleAccepted={}", movedSq,
+                    canFire(Tier.AMBIENT), lastRumbleAccepted());
         }
 
-        if (!onGround) return;
-        if (underfoot == Blocks.SLIME_BLOCK) {
-            // Two intensities, not one: the ORIGINAL feedback framed this as "como cuando estas en algo
-            // pegajoso" (like being in something sticky) — sticky is felt at rest, not only while
-            // pushing through it, so standing still on slime now gets its own gentler continuous pulse
-            // instead of total silence (a previously untested gap, not a repeat of the same magnitude
-            // guess). Walking still gets the stronger, previously-tuned 0.3/150ms hum on top of it.
-            if (speedSq < 0.003) {
-                if (now - lastSquishyPulseMs > 220L) {
-                    lastSquishyPulseMs = now;
-                    LogUtil.debug("[SteamPad] Slime pulse firing (standing): 0.16 intensity, 180ms, AMBIENT tier.");
-                    fire(Tier.AMBIENT, Category.PLAYER, 0.16f, 180, 0.5f);
-                }
-            } else if (now - lastSquishyPulseMs > 150L) {
+        // ~0.022 blocks/tick: comfortably below even slime-slowed sneak-walking, above standing
+        // drift — standing still on slime stays silent (approved behavior, unchanged).
+        boolean moving = movedSq >= 5.0e-4;
+        if (underfoot == Blocks.SLIME_BLOCK && moving) {
+            if (now - lastSquishyPulseMs > 240L) {
                 lastSquishyPulseMs = now;
-                LogUtil.debug("[SteamPad] Slime pulse firing (walking): 0.3 intensity, 200ms, AMBIENT tier.");
-                fire(Tier.AMBIENT, Category.PLAYER, 0.3f, 200, 0.5f);
+                // 320ms > 240ms cadence: consecutive pulses overlap into one continuous sticky drag.
+                boolean accepted = fire(Tier.AMBIENT, Category.PLAYER, 0.45f, 320, 0.25f);
+                LogUtil.debug("[SteamPad] Slime pulse firing (walking): 0.45 intensity, 320ms, AMBIENT "
+                        + "tier. rumbleAccepted={}", accepted);
             }
-        } else if (underfoot == Blocks.HONEY_BLOCK && speedSq >= 0.003) {
+        } else if (underfoot == Blocks.HONEY_BLOCK && moving) {
             if (now - lastSquishyPulseMs > 280L) {
                 lastSquishyPulseMs = now;
                 fire(Tier.COSMETIC, Category.PLAYER, 0.05f, 60, 0.75f);
@@ -479,11 +534,11 @@ public final class HapticsController {
 
     // ---- Movement: water splash (entry edge) + elytra glide (continuous while airborne) ----
 
-    private static void tickAquaticAndGliding(MinecraftClient mc) {
+    private static void tickAquaticAndGliding(Minecraft mc) {
         // Splash: only the entry edge, not "underwater" as a whole — a soft cosmetic pulse. A deep
         // dive that also qualifies as a fall-impact naturally wins the shared channel (higher tier),
         // so this never doubles up with that heavier landing thump.
-        boolean touchingWater = mc.player.isTouchingWater();
+        boolean touchingWater = mc.player.isInWater();
         if (touchingWater && !wasTouchingWaterForSplash) {
             fire(Tier.COSMETIC, Category.PLAYER, 0.18f, 70, 0.5f);
         }
@@ -491,11 +546,11 @@ public final class HapticsController {
 
         // Elytra glide: a very soft continuous presence, never competing with anything that matters
         // (lowest tier, short refresh) — just enough to feel "you are flying".
-        if (mc.player.isGliding()) {
+        if (mc.player.isFallFlying()) {
             long now = System.currentTimeMillis();
             if (now - lastGlideRumbleMs > 150L) {
                 lastGlideRumbleMs = now;
-                double speed = mc.player.getVelocity().length();
+                double speed = mc.player.getDeltaMovement().length();
                 float mag = (float) clamp(0.05 + speed * 0.03, 0.05, 0.14);
                 fire(Tier.AMBIENT, Category.PLAYER, mag, 100, 0.55f);
             }
@@ -504,9 +559,9 @@ public final class HapticsController {
 
     // ---- World: lightning (polled, no extra mixin needed for a rare event) -----------------
 
-    private static void pollLightning(MinecraftClient mc) {
-        var box = mc.player.getBoundingBox().expand(48.0);
-        for (LightningEntity bolt : mc.world.getEntitiesByClass(LightningEntity.class, box, e -> true)) {
+    private static void pollLightning(Minecraft mc) {
+        var box = mc.player.getBoundingBox().inflate(48.0);
+        for (LightningBolt bolt : mc.level.getEntitiesOfClass(LightningBolt.class, box, e -> true)) {
             if (!seenLightning.add(bolt.getId())) continue;
             double dist = mc.player.distanceTo(bolt);
             float falloff = (float) clamp(1.0 - dist / 48.0, 0.0, 1.0);
@@ -521,12 +576,12 @@ public final class HapticsController {
     /** Roughly vanilla's base fuse duration — a feel target, not read from the entity (private). */
     private static final long CREEPER_FUSE_MS = 1500L;
 
-    private static void pollMobs(MinecraftClient mc) {
+    private static void pollMobs(Minecraft mc) {
         long now = System.currentTimeMillis();
 
-        var mobBox = mc.player.getBoundingBox().expand(24.0);
+        var mobBox = mc.player.getBoundingBox().inflate(24.0);
         Set<Integer> stillIgnited = new HashSet<>();
-        for (CreeperEntity c : mc.world.getEntitiesByClass(CreeperEntity.class, mobBox, e -> true)) {
+        for (Creeper c : mc.level.getEntitiesOfClass(Creeper.class, mobBox, e -> true)) {
             if (!c.isIgnited()) continue;
             int id = c.getId();
             stillIgnited.add(id);
@@ -542,11 +597,11 @@ public final class HapticsController {
         creeperIgnitedSinceMs.keySet().retainAll(stillIgnited);
         creeperLastPingMs.keySet().retainAll(stillIgnited);
 
-        var wardenBox = mc.player.getBoundingBox().expand(40.0);
-        WardenEntity nearestWarden = null;
+        var wardenBox = mc.player.getBoundingBox().inflate(40.0);
+        Warden nearestWarden = null;
         double bestD2 = Double.MAX_VALUE;
-        for (WardenEntity w : mc.world.getEntitiesByClass(WardenEntity.class, wardenBox, e -> true)) {
-            double d2 = mc.player.squaredDistanceTo(w);
+        for (Warden w : mc.level.getEntitiesOfClass(Warden.class, wardenBox, e -> true)) {
+            double d2 = mc.player.distanceToSqr(w);
             if (d2 < bestD2) { bestD2 = d2; nearestWarden = w; }
         }
         if (nearestWarden == null) {
@@ -570,12 +625,12 @@ public final class HapticsController {
         // whose position jumped further than normal movement could cover in one poll window (~0.2s)
         // is treated as a teleport — a short, uncanny pulse, distinct from the mob-attack signature.
         Set<Integer> stillTrackedEnderman = new HashSet<>();
-        for (EndermanEntity en : mc.world.getEntitiesByClass(EndermanEntity.class, mobBox, e -> true)) {
+        for (EnderMan en : mc.level.getEntitiesOfClass(EnderMan.class, mobBox, e -> true)) {
             int id = en.getId();
             stillTrackedEnderman.add(id);
-            Vec3d pos = en.getEntityPos();
-            Vec3d last = endermanLastPos.put(id, pos);
-            if (last != null && last.squaredDistanceTo(pos) > 64.0) {   // > 8 blocks in one poll = teleport
+            Vec3 pos = en.position();
+            Vec3 last = endermanLastPos.put(id, pos);
+            if (last != null && last.distanceToSqr(pos) > 64.0) {   // > 8 blocks in one poll = teleport
                 fire(Tier.DANGER, Category.WORLD, 0.3f, 45, 0.85f);
             }
         }
@@ -592,15 +647,15 @@ public final class HapticsController {
      * it now, the mystery is over" — and its own hits are amplified separately, in
      * {@link #onPlayerDamaged}.
      */
-    private static void pollBossProximity(MinecraftClient mc) {
-        var box = mc.player.getBoundingBox().expand(BOSS_PING_RANGE);
+    private static void pollBossProximity(Minecraft mc) {
+        var box = mc.player.getBoundingBox().inflate(BOSS_PING_RANGE);
         LivingEntity nearest = null;
         double bestD2 = Double.MAX_VALUE;
         Set<Integer> stillInRange = new HashSet<>();
-        for (LivingEntity e : mc.world.getEntitiesByClass(LivingEntity.class, box,
-                le -> le.isAlive() && !(le instanceof PlayerEntity) && !(le instanceof WardenEntity) && isBossLike(le))) {
+        for (LivingEntity e : mc.level.getEntitiesOfClass(LivingEntity.class, box,
+                le -> le.isAlive() && !(le instanceof Player) && !(le instanceof Warden) && isBossLike(le))) {
             stillInRange.add(e.getId());
-            double d2 = mc.player.squaredDistanceTo(e);
+            double d2 = mc.player.distanceToSqr(e);
             if (d2 < bestD2) { bestD2 = d2; nearest = e; }
         }
         // Walked away (or the boss left range) without killing it — re-arm the mystery ping for next
@@ -617,7 +672,7 @@ public final class HapticsController {
         // momentary line-of-sight break mid-fight (dust, the boss ducking behind terrain) can't
         // restart it — only actually leaving BOSS_PING_RANGE does (the retainAll above).
         if (engagedBosses.contains(nearest.getId())) return;
-        if (dist < BOSS_REVEAL_RANGE && mc.player.canSee(nearest)) {   // seen it — mystery over
+        if (dist < BOSS_REVEAL_RANGE && mc.player.hasLineOfSight(nearest)) {   // seen it — mystery over
             engagedBosses.add(nearest.getId());
             return;
         }
@@ -642,19 +697,19 @@ public final class HapticsController {
     private static boolean isBossLike(LivingEntity e) {
         if (isBossBarActive(e)) return true;
         if (e.getMaxHealth() > BOSS_HEALTH_THRESHOLD) return true;
-        return e.getWidth() > BOSS_WIDTH_THRESHOLD && e.getHeight() > BOSS_HEIGHT_THRESHOLD;
+        return e.getBbWidth() > BOSS_WIDTH_THRESHOLD && e.getBbHeight() > BOSS_HEIGHT_THRESHOLD;
     }
 
     private static boolean isBossBarActive(Entity e) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.inGameHud == null) return false;
-        return mc.inGameHud.getBossBarHud().bossBars.containsKey(e.getUuid());
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.gui == null) return false;
+        return mc.gui.getBossOverlay().events.containsKey(e.getUUID());
     }
 
     // ---- World: Nether portal ping, amethyst geode, dungeon-chest treasure -----------------
 
-    private static void pollWorldProximity(MinecraftClient mc) {
-        BlockPos origin = mc.player.getBlockPos();
+    private static void pollWorldProximity(Minecraft mc) {
+        BlockPos origin = mc.player.blockPosition();
         final int hR = 10, vR = 6;
 
         double bestPortalD2 = Double.MAX_VALUE;
@@ -664,25 +719,25 @@ public final class HapticsController {
         BlockPos nearestChest = null;
         double bestChestD2 = Double.MAX_VALUE;
 
-        BlockPos.Mutable cursor = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int dx = -hR; dx <= hR; dx++) {
             int wx = origin.getX() + dx;
             for (int dz = -hR; dz <= hR; dz++) {
                 int wz = origin.getZ() + dz;
                 for (int dy = -vR; dy <= vR; dy++) {
                     cursor.set(wx, origin.getY() + dy, wz);
-                    BlockState st = mc.world.getBlockState(cursor);
+                    BlockState st = mc.level.getBlockState(cursor);
                     if (st.isAir()) continue;
                     Block b = st.getBlock();
-                    double d2 = cursor.getSquaredDistance(origin);
+                    double d2 = cursor.distSqr(origin);
                     if (b == Blocks.NETHER_PORTAL) {
                         if (d2 < bestPortalD2) bestPortalD2 = d2;
                     } else if (b == Blocks.AMETHYST_CLUSTER || b == Blocks.BUDDING_AMETHYST) {
                         if (d2 < bestGeodeD2) bestGeodeD2 = d2;
                     } else if (b == Blocks.SPAWNER) {
-                        if (d2 < bestSpawnerD2) { bestSpawnerD2 = d2; nearestSpawner = cursor.toImmutable(); }
+                        if (d2 < bestSpawnerD2) { bestSpawnerD2 = d2; nearestSpawner = cursor.immutable(); }
                     } else if (b instanceof ChestBlock) {
-                        if (d2 < bestChestD2) { bestChestD2 = d2; nearestChest = cursor.toImmutable(); }
+                        if (d2 < bestChestD2) { bestChestD2 = d2; nearestChest = cursor.immutable(); }
                     }
                 }
             }
@@ -716,7 +771,7 @@ public final class HapticsController {
         // player's own bed/respawn point (so a base full of storage chests stays silent).
         boolean treasureWorthy = false;
         if (nearestChest != null && bestChestD2 < 144.0) {
-            boolean nearSpawner = nearestSpawner != null && nearestChest.getSquaredDistance(nearestSpawner) <= 36.0;
+            boolean nearSpawner = nearestSpawner != null && nearestChest.distSqr(nearestSpawner) <= 36.0;
             boolean alreadyOpened = openedChests.contains(nearestChest);
             boolean nearHome = isNearHome(mc, nearestChest);
             treasureWorthy = nearSpawner && !alreadyOpened && !nearHome;
@@ -728,21 +783,32 @@ public final class HapticsController {
     }
 
     /** Within ~32 blocks of the player's current bed/respawn-anchor point, in this dimension. */
-    private static boolean isNearHome(MinecraftClient mc, BlockPos pos) {
-        var spawn = mc.world.getSpawnPoint();
+    private static boolean isNearHome(Minecraft mc, BlockPos pos) {
+        //? if >=1.21.2 {
+        var spawn = mc.level.getRespawnData();
         if (spawn == null) return false;
         var globalPos = spawn.globalPos();
-        if (globalPos == null || !globalPos.dimension().equals(mc.world.getRegistryKey())) return false;
-        return globalPos.pos().getSquaredDistance(pos) <= 1024.0;   // 32 blocks
+        if (globalPos == null || !globalPos.dimension().equals(mc.level.dimension())) return false;
+        return globalPos.pos().distSqr(pos) <= 1024.0;   // 32 blocks
+        //?} else {
+        /*// The client only learns the player's PERSONAL respawn point (bed / respawn anchor) from the
+        // respawn-data sync added in 1.21.2. Before that it is simply not available client-side, so
+        // "home" falls back to the world spawn — a coarser reference, but the haptic keeps working and
+        // still fires around the place players actually build. Same 32-block radius; no dimension
+        // check needed since getSharedSpawnPos is already per-level.
+        BlockPos spawn = mc.level.getSharedSpawnPos();
+        if (spawn == null) return false;
+        return spawn.distSqr(pos) <= 1024.0;
+        *///?}
     }
 
     // ---- Hooks called from mixins / Fabric API events --------------------------------------
 
     /** {@code ClientPlayNetworkHandlerMixin} — an explosion packet just arrived. */
-    public static void onExplosion(Vec3d center, float radius, boolean localKnockback) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+    public static void onExplosion(Vec3 center, float radius, boolean localKnockback) {
+        Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        double dist = mc.player.getEntityPos().distanceTo(center);
+        double dist = mc.player.position().distanceTo(center);
         double feelRange = Math.max(8.0, radius * 8.0);   // shockwave felt well past the blast radius
         double falloff = clamp(1.0 - dist / feelRange, 0.0, 1.0);
         if (localKnockback) falloff = Math.max(falloff, 0.55);   // the game already confirms "it hit you"
@@ -765,30 +831,30 @@ public final class HapticsController {
      * better-tuned effect for no benefit.
      */
     public static void onPlayerDamaged(DamageSource source) {
-        if (source.isIn(DamageTypeTags.IS_FIRE) || source.isIn(DamageTypeTags.IS_EXPLOSION)
-                || source.isIn(DamageTypeTags.IS_FALL) || source.isIn(DamageTypeTags.IS_DROWNING)
-                || source.isIn(DamageTypeTags.IS_FREEZING)) {
+        if (source.is(DamageTypeTags.IS_FIRE) || source.is(DamageTypeTags.IS_EXPLOSION)
+                || source.is(DamageTypeTags.IS_FALL) || source.is(DamageTypeTags.IS_DROWNING)
+                || source.is(DamageTypeTags.IS_FREEZING)) {
             return;
         }
 
-        Entity attacker = source.getAttacker();
+        Entity attacker = source.getEntity();
 
         // Boss override wins over everything else — a boss hit should always read as "this matters
         // more", regardless of damage type or the fact it might also be, say, a projectile.
         if (attacker != null && isBossLike(attacker)) {
             pendingHit = new PendingHit(Tier.CRITICAL, 0.3f, 1.5f, 1.4f);
-        } else if (source.isOf(DamageTypes.MAGIC) || source.isOf(DamageTypes.WITHER)
-                || source.isOf(DamageTypes.INDIRECT_MAGIC)) {
+        } else if (source.is(DamageTypes.MAGIC) || source.is(DamageTypes.WITHER)
+                || source.is(DamageTypes.INDIRECT_MAGIC)) {
             // Poison/wither/harmful-potion — irregular and insidious, promoted a tier above the
             // plain physical hit so it can interrupt a lesser event instead of being dropped by one.
             pendingHit = new PendingHit(Tier.DANGER, 0.5f, 1.0f, 1.0f);
-        } else if (attacker instanceof ZombieEntity) {
+        } else if (attacker instanceof Zombie) {
             pendingHit = new PendingHit(null, 0.15f, 1.0f, 1.0f);   // heavy, blunt
-        } else if (attacker instanceof SpiderEntity) {
+        } else if (attacker instanceof Spider) {
             pendingHit = new PendingHit(null, 0.65f, 1.0f, 1.0f);   // nervous, sharp-leaning
-        } else if (attacker instanceof SkeletonEntity) {
+        } else if (attacker instanceof Skeleton) {
             pendingHit = new PendingHit(null, 0.75f, 1.0f, 1.0f);   // punzante, arrow-like
-        } else if (attacker instanceof EndermanEntity) {
+        } else if (attacker instanceof EnderMan) {
             pendingHit = new PendingHit(null, 0.8f, 1.0f, 1.0f);    // sobrenatural, high-dominant
         } else {
             return;   // unclassified attacker/source — leave the generic HP-drop signature untouched
@@ -804,7 +870,7 @@ public final class HapticsController {
 
     /** Overload for the Enderman/isBossLike(LivingEntity) helper above — accepts any Entity safely. */
     private static boolean isBossLike(Entity e) {
-        return e instanceof LivingEntity living && !(living instanceof PlayerEntity) && isBossLike(living);
+        return e instanceof LivingEntity living && !(living instanceof Player) && isBossLike(living);
     }
 
     /**
@@ -817,74 +883,81 @@ public final class HapticsController {
      */
     private record WeaponSignature(float magnitude, int durationMs, float freqBalance) {}
 
-    private static WeaponSignature weaponSignature(net.minecraft.item.ItemStack weapon, boolean critLike) {
-        if (weapon.getItem() instanceof net.minecraft.item.MaceItem) {
+    private static WeaponSignature weaponSignature(net.minecraft.world.item.ItemStack weapon, boolean critLike) {
+        // D114: every signature now sits at or above ~0.4/140ms with weight pushed toward the LOW
+        // (strong) motor. This pad's own tuning history establishes the in-gameplay perceptibility
+        // floor around 0.3-0.4/150ms+ (the slime hum took three rounds to reach 0.3/300 before it
+        // registered even once; the arrow-kill pulse at 0.5/160 is reliably felt) — the previous
+        // sword/fist taps (0.22/90, high-motor-biased) sat BELOW that floor mid-combat, even though
+        // the identical test-screen preset, felt in calm attention, technically "worked". The
+        // per-weapon LANGUAGE (mace heaviest/lowest → sword sharpest/lightest) is preserved, just
+        // shifted up into the range this hardware actually renders.
+        if (weapon.getItem() instanceof net.minecraft.world.item.MaceItem) {
             // The mace's real "smash attack" requires falling — the exact same signal critLike already
             // computes — so a critLike mace hit IS a smash attack: the heaviest, lowest-frequency thud
             // in the whole haptic vocabulary, on purpose (it's the biggest single hit in the game).
-            return critLike ? new WeaponSignature(0.85f, 260, 0.05f) : new WeaponSignature(0.5f, 170, 0.15f);
+            return critLike ? new WeaponSignature(0.9f, 300, 0.05f) : new WeaponSignature(0.65f, 200, 0.15f);
         }
-        if (weapon.getItem() instanceof net.minecraft.item.TridentItem) {
-            return new WeaponSignature(critLike ? 0.5f : 0.32f, critLike ? 180 : 110, 0.25f);
+        if (weapon.getItem() instanceof net.minecraft.world.item.TridentItem) {
+            return new WeaponSignature(critLike ? 0.65f : 0.5f, critLike ? 230 : 170, 0.25f);
         }
-        if (weapon.isIn(net.minecraft.registry.tag.ItemTags.AXES)) {
-            return new WeaponSignature(critLike ? 0.5f : 0.3f, critLike ? 170 : 105, 0.45f);
+        if (weapon.is(net.minecraft.tags.ItemTags.AXES)) {
+            return new WeaponSignature(critLike ? 0.65f : 0.5f, critLike ? 230 : 170, 0.4f);
         }
-        if (weapon.isIn(net.minecraft.registry.tag.ItemTags.SWORDS)) {
-            return new WeaponSignature(critLike ? 0.45f : 0.22f, critLike ? 150 : 90, 0.7f);
+        if (weapon.is(net.minecraft.tags.ItemTags.SWORDS)) {
+            return new WeaponSignature(critLike ? 0.6f : 0.45f, critLike ? 210 : 150, 0.55f);
         }
-        // Fists / unrecognized item — unchanged from the previous single generic signature.
-        return new WeaponSignature(critLike ? 0.45f : 0.22f, critLike ? 150 : 90, 0.75f);
+        // Fists / unrecognized item.
+        return new WeaponSignature(critLike ? 0.55f : 0.4f, critLike ? 190 : 140, 0.6f);
     }
 
     /** {@code ClientPlayerInteractionManagerMixin} — the player's melee attack just landed on {@code target}. */
-    public static void onMeleeHit(PlayerEntity attacker, Entity target) {
+    public static void onMeleeHit(Player attacker, Entity target) {
         // Local approximation of vanilla's crit conditions (airborne, not on ground/water/vehicle,
         // not blinded) — a feel heuristic, not a guarantee of the server's actual crit roll.
         boolean critLike = attacker.fallDistance > 0.0
-                && !attacker.isOnGround()
-                && !attacker.isTouchingWater()
-                && !attacker.hasVehicle()
-                && !attacker.hasStatusEffect(StatusEffects.BLINDNESS);
+                && !attacker.onGround()
+                && !attacker.isInWater()
+                && !attacker.isPassenger()
+                && !attacker.hasEffect(MobEffects.BLINDNESS);
 
-        WeaponSignature sig = weaponSignature(attacker.getMainHandStack(), critLike);
+        WeaponSignature sig = weaponSignature(attacker.getMainHandItem(), critLike);
         float mag = sig.magnitude();
         int dur = sig.durationMs();
         Tier tier = Tier.IMPACT;
 
-        // Kill confirmation: a feel heuristic (health may lag one network tick behind the hit packet,
-        // same tolerance already accepted for critLike above) — when it lands, the hit gets promoted
-        // to the biggest tier and a firm bump in magnitude/duration, so a kill always reads as a bigger
-        // moment than a regular hit, on top of whichever weapon dealt it.
-        if (target instanceof LivingEntity le && le.getHealth() <= 0f) {
-            mag = clamp(mag * 1.5f, 0f, 1f);
-            dur = (int) (dur * 1.6f);
-            tier = Tier.CRITICAL;
+        // D114 — kills are deliberately NOT detected here anymore. This hook runs the instant the
+        // attack packet LEAVES the client, and the target's client-side health still holds its
+        // pre-hit value until the server answers one or more ticks later — so the old
+        // "health <= 0 right now → promote to CRITICAL" check only ever matched an already-dying
+        // corpse being whacked again, never the actual killing blow. That is precisely why melee
+        // kills never got their big pulse while arrow kills (evaluated in onEntityDamaged, AFTER the
+        // server's own damage packet) did — the exact reported asymmetry ("solo se siente cuando
+        // matas con flecha"). The hit now just arms the kill-confirmation window; pollPendingKills
+        // fires the one unified kill pulse when the entity's replicated state actually shows the
+        // death, a tick or two later.
+        if (target instanceof LivingEntity) {
+            recentPlayerHits.put(target.getId(), System.currentTimeMillis() + KILL_CONFIRM_WINDOW_MS);
         }
 
-        // Diagnostics (feedback: "solo se siente con la flecha... con armas de mano no se siente
-        // ningun tipo de vibracion", 4th+ reported round): onMeleeHit's own logic and its mixin target
-        // (attackEntity, verified via javap against the mapped 1.21.10 jar — it's the real client-side
-        // attack entry point, called unconditionally except in spectator mode) both look correct on
-        // inspection, and the computed magnitudes here are the SAME order as the arrow path that IS
-        // felt — so rather than guess a 5th blind fix, log every gate this call actually passes through,
-        // unthrottled (melee attacks are already rate-limited by the weapon's own cooldown, so this
-        // can't flood). The next hardware test's log tells us definitively whether this never reaches
-        // fire() at all (mixin/input problem — nothing below would print), reaches it but canFire()
-        // rejects it (tier arbitration — something else is winning the channel), or reaches
-        // ControllerManager.rumble() and STILL isn't felt (a hardware/driver-level issue, same category
-        // as the slime investigation).
+        // Diagnostics kept from the earlier investigation rounds (unthrottled, one line per real
+        // hit): if melee ever goes quiet again, this line distinguishes "never reached fire()"
+        // (nothing prints — mixin/input problem) from "reached it but blocked" (canFire/config
+        // fields) from "hardware rejected it" (rumbleAccepted=false with everything else clean).
         long handle = ActiveControllerService.getActiveHandle();
         ControllerConfig diagCfg = handle != 0L ? ConfigManager.getControllerConfig(handle) : null;
+        boolean preCanFire = canFire(tier);
+        lastMeleePulseTargetId = target.getId();
+        lastMeleePulseMs = System.currentTimeMillis();
+        boolean accepted = fire(tier, Category.INTERACTION, mag, dur, sig.freqBalance());
         LogUtil.debug("[SteamPad][haptics-melee] weapon={} critLike={} tier={} mag={} dur={} handle={} "
-                        + "allowVibration={} vibrationInteraction={} vibrationMaster={} canFire={} occupyingTier={}",
-                attacker.getMainHandStack().getItem(), critLike, tier, mag, dur, handle,
+                        + "allowVibration={} vibrationInteraction={} vibrationMaster={} canFireBefore={} "
+                        + "occupyingTierBefore={} rumbleAccepted={}",
+                attacker.getMainHandItem().getItem(), critLike, tier, mag, dur, handle,
                 diagCfg != null && diagCfg.allowVibration,
                 diagCfg != null ? diagCfg.vibrationInteraction : -1f,
                 diagCfg != null ? diagCfg.vibrationMaster : -1f,
-                canFire(tier), occupyingTier());
-
-        fire(tier, Category.INTERACTION, mag, dur, sig.freqBalance());
+                preCanFire, occupyingTier(), accepted);
         dev.steampad.input.JuiceController.shake(mag * 0.15, dur);
         dev.steampad.input.JuiceController.fovKick(mag * 0.12f);
 
@@ -899,7 +972,7 @@ public final class HapticsController {
      *  via {@link #engagedBosses}, the Warden via its own {@link #wardenEngaged} flag (kept separate
      *  on purpose, see {@link #pollMobs}). Shared by {@link #onMeleeHit} and {@link #onEntityDamaged}. */
     private static void markEngagedIfBossOrWarden(Entity target) {
-        if (target instanceof WardenEntity) {
+        if (target instanceof Warden) {
             wardenEngaged = true;
         } else if (isBossLike(target)) {
             engagedBosses.add(target.getId());
@@ -916,20 +989,87 @@ public final class HapticsController {
      * blow was fire/magic/a projectile, only that the player is the one dealing it.
      */
     public static void onEntityDamaged(Entity target, DamageSource source) {
-        if (source.getAttacker() != MinecraftClient.getInstance().player) return;
+        if (source.getEntity() != Minecraft.getInstance().player) return;
         markEngagedIfBossOrWarden(target);
+
+        // Every player-attributed hit — melee (redundant with onMeleeHit, same map entry), arrows,
+        // thrown tridents/snowballs, anything — arms the kill-confirmation window (D114);
+        // pollPendingKills owns the actual kill pulse.
+        if (target instanceof LivingEntity) {
+            recentPlayerHits.put(target.getId(), System.currentTimeMillis() + KILL_CONFIRM_WINDOW_MS);
+        }
+
+        // D115 — the melee HIT pulse also fires from THIS packet hook. Hard evidence from the v0.74.0
+        // hardware round: the kill pulse (this file's packet-driven pollPendingKills) IS felt, the
+        // radial-select pulse at a mere 0.05/25ms IS felt (user asked to TONE IT DOWN once, D070),
+        // yet the 0.45-0.65/150-200ms hit pulse from the attackEntity mixin produces nothing — so
+        // magnitude was never the problem (D114's floor rationale is refuted as the explanation for
+        // hit silence): the mixin path simply never runs in the user's real install. Their ~80-mod
+        // pack is the leading suspect — combat-overhaul mods replace the vanilla doAttack/attackEntity
+        // client path wholesale with their own attack packets (the mob still takes damage server-side,
+        // so kills and this packet keep working). The server's damage packet doesn't care who
+        // initiated the swing. getSource()==player selects direct-contact (melee) damage — for
+        // projectiles getSource() is the arrow entity, handled below. Deduped against onMeleeHit so
+        // vanilla setups where both paths are alive don't double-buzz a single hit.
+        Minecraft mc = Minecraft.getInstance();
+        if (source.getDirectEntity() == mc.player && target instanceof LivingEntity) {
+            long now = System.currentTimeMillis();
+            if (target.getId() != lastMeleePulseTargetId || now - lastMeleePulseMs > MELEE_PULSE_DEDUP_MS) {
+                lastMeleePulseTargetId = target.getId();
+                lastMeleePulseMs = now;
+                Player p = mc.player;
+                boolean critLike = p.fallDistance > 0.0
+                        && !p.onGround()
+                        && !p.isInWater()
+                        && !p.isPassenger()
+                        && !p.hasEffect(MobEffects.BLINDNESS);
+                WeaponSignature sig = weaponSignature(p.getMainHandItem(), critLike);
+                boolean accepted = fire(Tier.IMPACT, Category.INTERACTION,
+                        sig.magnitude(), sig.durationMs(), sig.freqBalance());
+                LogUtil.debug("[SteamPad][haptics-melee] Hit pulse via damage packet (D115): weapon={} "
+                                + "critLike={} mag={} dur={} rumbleAccepted={}",
+                        p.getMainHandItem().getItem(), critLike, sig.magnitude(), sig.durationMs(), accepted);
+                dev.steampad.input.JuiceController.shake(sig.magnitude() * 0.15, sig.durationMs());
+                dev.steampad.input.JuiceController.fovKick(sig.magnitude() * 0.12f);
+            }
+        }
 
         // Confirmed ranged hit (arrow/trident throw) — a short, sharp "point" tap, deliberately
         // distinct from melee's fuller pulse (feedback request: "con la flecha se sienta como un
         // punto"). Gated to projectile-sourced damage only, so this never doubles up with onMeleeHit
-        // (a melee hit's DamageSource#getSource() is the player, never a projectile entity).
-        if (source.getSource() instanceof net.minecraft.entity.projectile.PersistentProjectileEntity) {
-            boolean lethal = target instanceof LivingEntity le && le.getHealth() <= 0f;
-            float mag = lethal ? 0.5f : 0.22f;
-            int dur = lethal ? 160 : 55;
-            fire(lethal ? Tier.CRITICAL : Tier.IMPACT, Category.INTERACTION, mag, dur, 0.9f);
-            dev.steampad.input.JuiceController.shake(mag * 0.08, dur);
-            dev.steampad.input.JuiceController.fovKick(mag * 0.06f);
+        // (a melee hit's DamageSource#getSource() is the player, never a projectile entity). The old
+        // lethal special case moved to pollPendingKills (D114) — a killing arrow now reads as this
+        // tap plus the unified kill thump right after, same payoff language as melee.
+        if (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.AbstractArrow) {
+            fire(Tier.IMPACT, Category.INTERACTION, 0.22f, 55, 0.9f);
+            dev.steampad.input.JuiceController.shake(0.02, 55);
+            dev.steampad.input.JuiceController.fovKick(0.015f);
+        }
+    }
+
+    /**
+     * Confirms kills the moment the entity's server-replicated state shows them (D114): any tracked
+     * recently-hit entity that is now dead — or gone from the client world — inside its confirmation
+     * window gets the one unified kill pulse, with the exact values of the long-standing (and
+     * hardware-confirmed felt) {@code weapon_kill} test preset. CRITICAL tier, so no lesser pulse —
+     * including the very hit that caused the death — can occupy the channel over the payoff moment.
+     */
+    private static void pollPendingKills(Minecraft mc) {
+        if (recentPlayerHits.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        var it = recentPlayerHits.entrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            if (now > e.getValue()) { it.remove(); continue; }
+            Entity ent = mc.level.getEntity(e.getKey());
+            if (ent == null || !ent.isAlive()) {
+                it.remove();
+                fire(Tier.CRITICAL, Category.INTERACTION, 0.75f, 260, 0.2f);
+                dev.steampad.input.JuiceController.shake(0.1, 260);
+                dev.steampad.input.JuiceController.fovKick(0.1f);
+                LogUtil.debug("[SteamPad][haptics-melee] Kill confirmed for entity id={} — unified "
+                        + "kill pulse fired (0.75, 260ms, CRITICAL).", e.getKey());
+            }
         }
     }
 
@@ -952,7 +1092,7 @@ public final class HapticsController {
     /** Fabric API {@code UseBlockCallback} — remembers opened chests so their treasure ping retires. */
     public static void onBlockUsed(BlockPos pos, BlockState state) {
         if (state.getBlock() instanceof ChestBlock) {
-            openedChests.add(pos.toImmutable());
+            openedChests.add(pos.immutable());
             // Soft "creak" accompanying the lid animation (audit: chests felt mute) — cosmetic on
             // purpose, the treasure system already owns the "this one matters" signal.
             fire(Tier.COSMETIC, Category.INTERACTION, 0.18f, 130, 0.5f);
@@ -989,20 +1129,35 @@ public final class HapticsController {
 
     // ---- Dispatch ---------------------------------------------------------------------------
 
+    /** Diagnostic-only: whether the LAST {@link #fire} call that reached {@link ControllerManager#rumble}
+     *  was actually ACCEPTED by the backend (see that method's own doc) — null if nothing has reached
+     *  that point yet this session. Surfaced in the melee/slime debug lines (D113) so a REPEATED
+     *  rejection (as opposed to "canFire()/config blocked it before even trying") is visible without
+     *  depending on {@code Sdl3GamepadProvider}'s own 3-line warning cap, which one unrelated earlier
+     *  failure could exhaust before the effect actually worth diagnosing ever fires. */
+    private static Boolean lastRumbleAccepted = null;
+
+    public static Boolean lastRumbleAccepted() { return lastRumbleAccepted; }
+
     /**
      * Resolves the active controller + its category multiplier, gates on {@link Tier} priority
      * (single rumble channel — see class doc), converts {@code freqBalance} (0 = heavy/low-motor,
      * 1 = sharp/high-motor) into a low/high split, and fires. No-ops below a negligible intensity so
      * events don't produce an inaudible/imperceptible buzz, and below the current tier occupying the
      * channel so a trivial event can never talk over something that matters more.
+     *
+     * @return true only if the request reached {@link ControllerManager#rumble} AND was accepted by
+     *         the backend — false for every early-out (tier blocked, no controller, vibration off,
+     *         negligible intensity) AND for a backend-level rejection. Diagnostic use — callers that
+     *         don't care can ignore it, exactly as before this return type existed.
      */
-    private static void fire(Tier tier, Category cat, float baseIntensity, int durationMs, float freqBalance) {
-        if (!canFire(tier)) return;
+    private static boolean fire(Tier tier, Category cat, float baseIntensity, int durationMs, float freqBalance) {
+        if (!canFire(tier)) return false;
 
         long handle = ActiveControllerService.getActiveHandle();
-        if (handle == 0L) return;
+        if (handle == 0L) return false;
         ControllerConfig cfg = ConfigManager.getControllerConfig(handle);
-        if (!cfg.allowVibration) return;
+        if (!cfg.allowVibration) return false;
 
         float catMult = switch (cat) {
             case PLAYER -> cfg.vibrationPlayer;
@@ -1013,12 +1168,14 @@ public final class HapticsController {
             case MISC -> cfg.vibrationMisc;
         };
         float intensity = clamp(baseIntensity * cfg.vibrationMaster * catMult, 0f, 1f);
-        if (intensity < 0.02f) return;
+        if (intensity < 0.02f) return false;
 
         float low = intensity * (1f - 0.5f * freqBalance);
         float high = intensity * (0.5f + 0.5f * freqBalance);
-        ControllerManager.rumble(handle, low, high, durationMs);
+        boolean accepted = ControllerManager.rumble(handle, low, high, durationMs);
+        lastRumbleAccepted = accepted;
         occupy(tier, durationMs);
+        return accepted;
     }
 
     /** Cuts off whatever is currently buzzing (pause menu — see {@link #tick}) and releases the

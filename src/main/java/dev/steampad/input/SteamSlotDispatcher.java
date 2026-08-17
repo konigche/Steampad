@@ -1,19 +1,18 @@
 package dev.steampad.input;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.steam.SteamActionRegistry;
 import dev.steampad.steam.SteamInputManager;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.text.Text;
-
 import java.util.Map;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.network.chat.Component;
 
 /**
  * Dispatches the generic Steam Input slots (steampad_slot_1..N) to a user-assigned target — either a
@@ -52,8 +51,8 @@ public final class SteamSlotDispatcher {
 
     private static final boolean[] down = new boolean[SLOT_COUNT];
     private static final Context[] heldContext = new Context[SLOT_COUNT];
-    private static final KeyBinding[] heldKb = new KeyBinding[SLOT_COUNT];
-    private static final InputUtil.Key[] heldKey = new InputUtil.Key[SLOT_COUNT];
+    private static final KeyMapping[] heldKb = new KeyMapping[SLOT_COUNT];
+    private static final InputConstants.Key[] heldKey = new InputConstants.Key[SLOT_COUNT];
     private static final GamepadBinds.Bind[] heldBind = new GamepadBinds.Bind[SLOT_COUNT];
 
     // ---- Named-action bridge (B074/B075) --------------------------------------------------------
@@ -117,12 +116,12 @@ public final class SteamSlotDispatcher {
     }
 
     /** The context a slot press belongs to right now. */
-    public static Context currentContext(MinecraftClient mc) {
-        Screen screen = mc.currentScreen;
+    public static Context currentContext(Minecraft mc) {
+        Screen screen = mc.screen;
         if (screen == null) {
-            return (mc.player != null && mc.player.hasVehicle()) ? Context.MOUNTED : Context.GAMEPLAY;
+            return (mc.player != null && mc.player.isPassenger()) ? Context.MOUNTED : Context.GAMEPLAY;
         }
-        return screen instanceof HandledScreen<?> ? Context.INVENTORY : Context.MENU;
+        return screen instanceof AbstractContainerScreen<?> ? Context.INVENTORY : Context.MENU;
     }
 
     /** The raw target string assigned to a slot in a given context ("" = unassigned there). */
@@ -158,11 +157,11 @@ public final class SteamSlotDispatcher {
 
     /** Human-readable name for a stored slot target, for UI display — resolves both keybind ids and
      *  "bind:NAME" internal actions to their translated label; "" shows as unassigned. */
-    public static Text displayName(String raw) {
-        if (raw == null || raw.isEmpty()) return Text.translatable("steampad.bind.slot.empty");
+    public static Component displayName(String raw) {
+        if (raw == null || raw.isEmpty()) return Component.translatable("steampad.bind.slot.empty");
         GamepadBinds.Bind bind = parseBind(raw);
-        if (bind != null) return Text.translatable(bind.labelKey);
-        return Text.translatable(raw);
+        if (bind != null) return Component.translatable(bind.labelKey);
+        return Component.translatable(raw);
     }
 
     /**
@@ -181,7 +180,7 @@ public final class SteamSlotDispatcher {
      * </ol>
      */
     public static void tick() {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc == null) return;
         Context ctx = currentContext(mc);
 
@@ -240,7 +239,7 @@ public final class SteamSlotDispatcher {
             VirtualBindInput.setHeld(bind, true);
             return;
         }
-        KeyBinding kb = findKeybind(target);
+        KeyMapping kb = findKeybind(target);
         if (kb == null) return;   // unknown keybind id (mod no longer installed) — silent no-op
         heldKb[i] = kb;
         heldKey[i] = KeyTap.hold(kb);
@@ -308,9 +307,10 @@ public final class SteamSlotDispatcher {
     }
 
     /** GLFW window handle for keyboard polling (0 when the window isn't up yet). Never throws. */
-    private static long windowHandle(MinecraftClient mc) {
+    private static long windowHandle(Minecraft mc) {
         try {
-            return mc.getWindow() != null ? mc.getWindow().getHandle() : 0L;
+            return mc.getWindow() != null
+                    ? dev.steampad.compat.mc.WindowCompat.handle(mc.getWindow()) : 0L;
         } catch (Throwable t) {
             return 0L;
         }
@@ -331,12 +331,12 @@ public final class SteamSlotDispatcher {
     }
 
     /** Looks up a keybind by id in the live registry. Null when unset, unknown, or too early. */
-    private static KeyBinding findKeybind(String keybindId) {
+    private static KeyMapping findKeybind(String keybindId) {
         if (keybindId == null || keybindId.isEmpty()) return null;
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.options == null) return null;
-        for (KeyBinding kb : mc.options.allKeys) {
-            if (kb.getId().equals(keybindId)) return kb;
+        for (KeyMapping kb : mc.options.keyMappings) {
+            if (kb.getName().equals(keybindId)) return kb;
         }
         LogUtil.debug("Steam slot keybind not found: {}", keybindId);
         return null;

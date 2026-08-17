@@ -3,8 +3,8 @@ package dev.steampad.emote;
 import dev.steampad.util.LogUtil;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.Entity;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
 
 /**
  * CLIENT side of emote multiplayer sync (see {@link EmoteNetwork} for the protocol). Sending is
@@ -18,13 +18,13 @@ public final class EmoteNetworkClient {
     /** Registers the S2C receiver + disconnect cleanup. Called once from SteamPadClient. */
     public static void registerClient() {
         ClientPlayNetworking.registerGlobalReceiver(EmoteNetwork.StartS2C.ID, (payload, context) -> {
-            MinecraftClient mc = context.client();
-            if (mc.world == null) return;
+            Minecraft mc = context.client();
+            if (mc.level == null) return;
             if (payload.stop()) {
                 EmoteAnimator.requestStop(payload.entityId());
                 return;
             }
-            Entity e = mc.world.getEntityById(payload.entityId());
+            Entity e = mc.level.getEntity(payload.entityId());
             if (e == null) return;   // not visible/loaded here — nothing to animate
             EmoteData data = EmoteLibrary.byId(payload.emoteId());
             if (data == null) {

@@ -1,21 +1,21 @@
 package dev.steampad.screen;
 
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
+import dev.steampad.compat.mc.FrameTimeCompat;
+import dev.steampad.compat.mc.InputEventCompat;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * Base class for all SteamPad screens.
  *
- * <p>Overrides {@link #renderBackground} to draw a gradient fill instead of delegating to
- * {@code Screen.renderBackground()}, which applies a GPU blur pass. MC 1.21.10 enforces
- * "Can only blur once per frame"; the render pipeline may call {@code renderBackground()} before our
- * {@code render()} runs, so any later {@code super.renderBackground()} would crash. Never calling
- * super makes background rendering safe to call any number of times per frame.
+ * <p>Suppresses vanilla's own late {@link #renderBackground} call and re-issues the very same one
+ * EARLY, from {@link #renderChrome} — so the blurred backdrop still renders exactly as vanilla draws
+ * it, just before our chrome instead of on top of it. See {@link #renderChrome}'s doc for the
+ * ordering bug this solves.
  *
  * <p>Also provides a shared, refreshed visual language (header bar, footer, section headers, accent
  * palette) so every SteamPad screen looks cohesive and "console-like". These helpers are additive —
@@ -25,9 +25,11 @@ import java.util.List;
  */
 public abstract class SteamPadBaseScreen extends Screen {
 
-    // Background gradient (blur-free).
-    protected static final int BG_COLOR_TOP    = 0xF00B0E14;
-    protected static final int BG_COLOR_BOTTOM = 0xF005070A;
+    /** Tint laid over vanilla's blurred backdrop — darkens it for contrast WITHOUT hiding the blur.
+     *  Low alpha on purpose: at the old near-opaque values the blur underneath was invisible, which
+     *  read as "the blur was removed". */
+    protected static final int BG_TINT_TOP    = 0x660B0E14;
+    protected static final int BG_TINT_BOTTOM = 0x8805070A;
 
     // Refreshed palette.
     protected static final int ACCENT       = 0xFF4FA3FF;  // SteamPad blue
@@ -45,29 +47,60 @@ public abstract class SteamPadBaseScreen extends Screen {
     protected static final int HEADER_H = 30;
     protected static final int FOOTER_H = 34;
 
-    protected SteamPadBaseScreen(Text title) {
+    protected SteamPadBaseScreen(Component title) {
         super(title);
     }
 
-    // NOTE: renderBackground() is intentionally NOT overridden. MC's render pipeline applies the
-    // native blur+darkening pass once per frame before render() runs, so screens must NOT call
-    // renderBackground() themselves (a second pass crashes with "Can only blur once per frame").
-    // The result is Minecraft's native blurred background behind every SteamPad screen.
+    /**
+     * Suppressed on purpose — {@link #renderChrome} issues this same background EARLY instead. See
+     * that method's doc for the ordering bug.
+     */
+    @Override
+    public void renderBackground(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
+        // Intentionally empty: the real background is drawn from renderChrome().
+    }
 
     /**
-     * Draws the shared header bar (with title + accent underline) and footer band. Call once from a
-     * screen's {@code render()} after {@code renderBackground()} and before drawing content.
+     * Draws the blurred backdrop, then the shared header bar (title + accent underline) and footer
+     * band. Call once, as the FIRST thing a screen's {@code render()} does.
+     *
+     * <p><b>Why the background is drawn here rather than left to {@code Screen.render()}:</b> every
+     * SteamPad screen draws its own header/panels/content BEFORE calling {@code super.render(...)}
+     * (which is where the button/slider widgets actually render). {@code Screen.render()} calls
+     * {@code this.renderBackground(...)} as its own very first instruction (verified with
+     * {@code javap} against the real 1.21.1 jar) — so on a version where that call paints immediately
+     * (pre-Blaze3D-rewrite, unlike 1.21.10's queued/deferred compositing), calling
+     * {@code super.render()} LATE meant vanilla's background painted LAST, on top of our already-drawn
+     * header: the "header renders behind the blur" bug. Suppressing {@link #renderBackground} and
+     * re-issuing it here — the actual first thing every screen's {@code render()} does — pins the
+     * paint order to background → chrome → content → widgets → text on every version, without
+     * touching any individual screen's {@code render()}.
+     *
+     * <p><b>It calls vanilla's real background, not a substitute.</b> An earlier cut of this fix drew
+     * a flat opaque gradient instead, which did fix the ordering but silently dropped the blur the
+     * mod is supposed to have (reported as "you removed the blur, now it's just a colour"). Vanilla's
+     * {@code renderBackground} is what applies {@code renderBlurredBackground} — present on BOTH
+     * supported versions with the same public signature — so the fix is to call it early, not to
+     * replace it. The tint on top is deliberately translucent so the blur stays visible through it.
+     * Vanilla ignores the mouse coordinates in that method (confirmed in its bytecode: only the
+     * partial tick is used, for the blur and the main-menu panorama), so passing 0,0 is exact rather
+     * than approximate.
      */
-    protected void renderChrome(DrawContext ctx, Text title) {
+    protected void renderChrome(GuiGraphics ctx, Component title) {
+        // Vanilla's own blurred backdrop (see doc above), re-issued early instead of late.
+        super.renderBackground(ctx, 0, 0, FrameTimeCompat.partialTick(this.minecraft));
+        // Darkening tint for text contrast — translucent, so the blur underneath still reads.
+        ctx.fillGradient(0, 0, this.width, this.height, BG_TINT_TOP, BG_TINT_BOTTOM);
+
         // Header band + accent underline.
         ctx.fill(0, 0, this.width, HEADER_H, HEADER_BG);
         ctx.fill(0, HEADER_H, this.width, HEADER_H + 2, ACCENT);
-        ctx.drawCenteredTextWithShadow(this.textRenderer, title, this.width / 2, 11, TEXT_PRIMARY);
+        ctx.drawCenteredString(this.font, title, this.width / 2, 11, TEXT_PRIMARY);
 
         // Active controller name, top-left, so it's always clear which pad you're configuring.
         String pad = activeControllerName();
         if (pad != null) {
-            ctx.drawText(this.textRenderer, Text.literal(pad), 8, 4, ACCENT, true);
+            ctx.drawString(this.font, Component.literal(pad), 8, 4, ACCENT, true);
         }
 
         // Footer band + accent underline (drawn above the band).
@@ -85,22 +118,22 @@ public abstract class SteamPadBaseScreen extends Screen {
     }
 
     /** Convenience: header chrome using this screen's own title. */
-    protected void renderChrome(DrawContext ctx) {
+    protected void renderChrome(GuiGraphics ctx) {
         renderChrome(ctx, this.title);
     }
 
     /** Public hook so helper classes (e.g. SettingsTabs) can add widgets to this screen. */
-    public ClickableWidget addDrawableChildPublic(ClickableWidget w) {
-        return addDrawableChild(w);
+    public AbstractWidget addDrawableChildPublic(AbstractWidget w) {
+        return addRenderableWidget(w);
     }
 
     /**
      * Draws a section header — a short accent bar, a label, and a divider line spanning the content
      * width. Returns the Y just below the header so callers can continue laying out widgets.
      */
-    protected int drawSectionHeader(DrawContext ctx, int x, int y, int width, Text label) {
+    protected int drawSectionHeader(GuiGraphics ctx, int x, int y, int width, Component label) {
         ctx.fill(x, y + 1, x + 3, y + 9, ACCENT);                 // accent tick
-        ctx.drawText(this.textRenderer, label, x + 8, y, ACCENT, true);
+        ctx.drawString(this.font, label, x + 8, y, ACCENT, true);
         int lineY = y + 12;
         ctx.fill(x, lineY, x + width, lineY + 1, DIVIDER);        // divider
         return lineY + 5;
@@ -118,7 +151,7 @@ public abstract class SteamPadBaseScreen extends Screen {
     // baseY - scrollY() and cull with isInViewport(). Fixed chrome (Back button) stays out of the
     // scroll set.
 
-    private record ScrollItem(ClickableWidget widget, int baseY) {}
+    private record ScrollItem(AbstractWidget widget, int baseY) {}
     private final List<ScrollItem> scrollItems = new ArrayList<>();
     private int scrollY = 0;
     private int scrollMax = 0;
@@ -130,8 +163,8 @@ public abstract class SteamPadBaseScreen extends Screen {
     }
 
     /** Register a widget as scrollable at its base Y; also adds it as a child. Returns the widget. */
-    protected <T extends ClickableWidget> T addScroll(T widget, int baseY) {
-        addDrawableChild(widget);
+    protected <T extends AbstractWidget> T addScroll(T widget, int baseY) {
+        addRenderableWidget(widget);
         scrollItems.add(new ScrollItem(widget, baseY));
         return widget;
     }
@@ -184,7 +217,7 @@ public abstract class SteamPadBaseScreen extends Screen {
     private static final int SCROLLBAR_HIT_PAD = 4;   // widen the click target beyond the 3px visual bar
 
     /** Draws a scrollbar at the right edge of the content column, if scrolling is active. */
-    protected void renderScrollbar(DrawContext ctx, int rightX) {
+    protected void renderScrollbar(GuiGraphics ctx, int rightX) {
         if (scrollMax <= 0) { scrollbarRightX = -1; return; }
         scrollbarRightX = rightX;
         int top = contentTop();
@@ -205,36 +238,79 @@ public abstract class SteamPadBaseScreen extends Screen {
         applyScrollLayout();
     }
 
-    @Override
-    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+    // The three mouse handlers below are pure adapters: 1.21.9 replaced their loose (x, y, button)
+    // parameters with a MouseButtonEvent record, so the DECLARATION has to differ per version — a
+    // signature is a contract, it cannot be shimmed away. All real logic lives in the version-agnostic
+    // helpers underneath, so there is exactly one implementation of the scrollbar behaviour.
+
+    /** True when this press landed on the scrollbar and started a drag. */
+    private boolean steampad$scrollbarPress(double mouseX, double mouseY) {
         if (scrollbarRightX >= 0 && scrollMax > 0
-                && click.x() >= scrollbarRightX - SCROLLBAR_HIT_PAD
-                && click.x() <= scrollbarRightX + 3 + SCROLLBAR_HIT_PAD
-                && click.y() >= contentTop() && click.y() <= contentBottom()) {
+                && mouseX >= scrollbarRightX - SCROLLBAR_HIT_PAD
+                && mouseX <= scrollbarRightX + 3 + SCROLLBAR_HIT_PAD
+                && mouseY >= contentTop() && mouseY <= contentBottom()) {
             draggingScrollbar = true;
-            scrollToMouse(click.y());
+            scrollToMouse(mouseY);
             return true;
         }
-        return super.mouseClicked(click, doubleClick);
+        return false;
     }
 
-    @Override
-    public boolean mouseDragged(net.minecraft.client.gui.Click click, double offsetX, double offsetY) {
+    /** True when a scrollbar drag is in progress and consumed this move. */
+    private boolean steampad$scrollbarDrag(double mouseY) {
         if (draggingScrollbar) {
-            scrollToMouse(click.y());
+            scrollToMouse(mouseY);
             return true;
         }
-        return super.mouseDragged(click, offsetX, offsetY);
+        return false;
     }
 
-    @Override
-    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+    /** True when a scrollbar drag was in progress and this release ended it. */
+    private boolean steampad$scrollbarRelease() {
         if (draggingScrollbar) {
             draggingScrollbar = false;
             return true;
         }
+        return false;
+    }
+
+    //? if >=1.21.9 {
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubleClick) {
+        if (steampad$scrollbarPress(click.x(), click.y())) return true;
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double offsetX, double offsetY) {
+        if (steampad$scrollbarDrag(click.y())) return true;
+        return super.mouseDragged(click, offsetX, offsetY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        if (steampad$scrollbarRelease()) return true;
         return super.mouseReleased(click);
     }
+    //?} else {
+    /*@Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (steampad$scrollbarPress(mouseX, mouseY)) return true;
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (steampad$scrollbarDrag(mouseY)) return true;
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (steampad$scrollbarRelease()) return true;
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+    *///?}
 
     protected static int clampInt(int v, int lo, int hi) {
         return v < lo ? lo : (v > hi ? hi : v);
@@ -258,7 +334,7 @@ public abstract class SteamPadBaseScreen extends Screen {
         List<NavEntry> entries = navEntries();
         if (entries.isEmpty()) return;
 
-        ClickableWidget focused = this.getFocused() instanceof ClickableWidget c ? c : null;
+        AbstractWidget focused = this.getFocused() instanceof AbstractWidget c ? c : null;
         NavEntry cur = null;
         for (NavEntry e : entries) if (e.widget == focused) { cur = e; break; }
 
@@ -283,7 +359,7 @@ public abstract class SteamPadBaseScreen extends Screen {
     }
 
     /** True if the widget is currently visible (scroll rows check the live viewport; fixed = always). */
-    private boolean isInViewport(ClickableWidget w) {
+    private boolean isInViewport(AbstractWidget w) {
         for (ScrollItem it : scrollItems) {
             if (it.widget() == w) {
                 int y = it.baseY() - scrollY;
@@ -322,10 +398,9 @@ public abstract class SteamPadBaseScreen extends Screen {
 
     /** Activates the focused widget (A button). */
     public boolean focusActivate() {
-        if (this.getFocused() instanceof ClickableWidget w) {
+        if (this.getFocused() instanceof AbstractWidget w) {
             double cx = w.getX() + w.getWidth() / 2.0, cy = w.getY() + w.getHeight() / 2.0;
-            w.mouseClicked(new net.minecraft.client.gui.Click(cx, cy,
-                    new net.minecraft.client.input.MouseInput(0, 0)), false);
+            InputEventCompat.mouseClicked(w, cx, cy, 0);
             return true;
         }
         return false;
@@ -333,17 +408,17 @@ public abstract class SteamPadBaseScreen extends Screen {
 
     /** Moves the OS pointer onto the focused widget so hover == focus (single highlight). */
     private void syncCursorToFocused() {
-        if (this.getFocused() instanceof ClickableWidget w) {
+        if (this.getFocused() instanceof AbstractWidget w) {
             dev.steampad.input.VirtualMouseController.setPosition(
                     w.getX() + w.getWidth() / 2.0, w.getY() + w.getHeight() / 2.0);
         }
     }
 
-    private record NavEntry(ClickableWidget widget, double cx, double cy) {}
+    private record NavEntry(AbstractWidget widget, double cx, double cy) {}
 
     /** Navigable widgets with their logical centers (scroll rows use baseY so off-screen rows count). */
     private List<NavEntry> navEntries() {
-        List<ClickableWidget> scrollW = new ArrayList<>();
+        List<AbstractWidget> scrollW = new ArrayList<>();
         List<NavEntry> out = new ArrayList<>();
         for (ScrollItem it : scrollItems) {
             scrollW.add(it.widget());
@@ -352,7 +427,7 @@ public abstract class SteamPadBaseScreen extends Screen {
                     it.baseY() + it.widget().getHeight() / 2.0));
         }
         for (var el : this.children()) {
-            if (el instanceof ClickableWidget w && w.active && !scrollW.contains(w)) {
+            if (el instanceof AbstractWidget w && w.active && !scrollW.contains(w)) {
                 out.add(new NavEntry(w, w.getX() + w.getWidth() / 2.0, w.getY() + w.getHeight() / 2.0));
             }
         }
@@ -360,22 +435,22 @@ public abstract class SteamPadBaseScreen extends Screen {
     }
 
     /** All navigable widgets in visual (top-to-bottom) order: scroll rows then fixed buttons. */
-    private List<ClickableWidget> navOrder() {
-        List<ClickableWidget> scrollW = new ArrayList<>();
+    private List<AbstractWidget> navOrder() {
+        List<AbstractWidget> scrollW = new ArrayList<>();
         for (ScrollItem it : scrollItems) scrollW.add(it.widget());
-        List<ClickableWidget> fixed = new ArrayList<>();
+        List<AbstractWidget> fixed = new ArrayList<>();
         for (var e : this.children()) {
-            if (e instanceof ClickableWidget w && w.active && !scrollW.contains(w)) fixed.add(w);
+            if (e instanceof AbstractWidget w && w.active && !scrollW.contains(w)) fixed.add(w);
         }
         // scroll rows already in baseY order (added top-to-bottom); fixed sorted by current Y.
         fixed.sort((a, b) -> Integer.compare(a.getY(), b.getY()));
-        List<ClickableWidget> out = new ArrayList<>(scrollW.size() + fixed.size());
+        List<AbstractWidget> out = new ArrayList<>(scrollW.size() + fixed.size());
         out.addAll(scrollW);
         out.addAll(fixed);
         return out;
     }
 
-    private void scrollToReveal(ClickableWidget w) {
+    private void scrollToReveal(AbstractWidget w) {
         if (scrollMax <= 0) return;
         for (ScrollItem it : scrollItems) {
             if (it.widget() == w) {

@@ -168,34 +168,50 @@ class EmoteCraftBinaryParserTest {
         assertFalse(d.hasChannel(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.Y),
                 "count = -1 means DISABLED even in v2 (older-writer tolerance, 13/21 real files)");
         assertEquals(2, d.keyframeCount(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.PITCH));
-        assertTrue(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.X), "\"body\" merges into TORSO");
+        assertTrue(d.hasChannel(EmoteData.Part.BODY, EmoteData.Axis.X),
+                "\"body\" is the WHOLE-MODEL channel (D110), not the torso bone");
+        assertFalse(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.X),
+                "\"body\" data must NOT leak into the torso bone — merging them was why sitting "
+                        + "emotes floated in the air");
 
         // Absolute-pivot semantics survive the parse: the x keyframe SETS the pivot to -5 (which is
         // also rightArm's default — i.e. the arm stays attached to the shoulder, D099's core fact).
         assertEquals(-5f, d.sample(EmoteData.Part.RIGHT_ARM, EmoteData.Axis.X, 0f), 1e-4);
     }
 
-    /** Real-world regression: "Friendship Round Dance" (a MineEmotes export) declares REAL x/pitch
-     *  keyframes on BOTH "torso" and "body" — a genuine collision, not the normal bend-only torso
-     *  pattern. Merging both blindly interleaves two authors' tracks on one channel (confirmed cause
-     *  of erratic/"locked"-looking rotation reported after v0.59.0, D100). "body" must win. */
+    /**
+     * Real-world regression, REINTERPRETED in D110: "Friendship Round Dance" (a MineEmotes export)
+     * declares REAL x/pitch keyframes on BOTH "torso" and "body". Until v0.69.0 this was read as a
+     * data COLLISION on one shared channel and "resolved" by dropping torso's track — but the two are
+     * not duplicates at all: {@code body} is the whole-model transform and {@code torso} is the body
+     * bone (verified in the reference's own {@code PlayerRendererMixin} vs {@code PlayerModelMixin}).
+     * The file was always well-formed; the parser's model of it was wrong. Both tracks must now
+     * survive intact, on their own separate channels, with nothing dropped.
+     */
     @Test
-    void bodyWinsOnRotationCollisionWithTorso() throws IOException {
+    void bodyAndTorsoAreSeparateChannelsNotAMergeCollision() throws IOException {
         byte[] file = container(dataPacketV2WithTorsoCollision());
         EmoteData d = EmoteCraftBinaryParser.parse("collision", file);
         assertNotNull(d);
 
-        assertTrue(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.X));
-        assertEquals(1, d.keyframeCount(EmoteData.Part.TORSO, EmoteData.Axis.X),
-                "torso's colliding x keyframe must be dropped, not merged in");
-        assertEquals(2f, d.sample(EmoteData.Part.TORSO, EmoteData.Axis.X, 0f), 1e-4,
-                "body's value wins the collision, not torso's 99");
+        // body: the whole-model channel keeps its own x untouched.
+        assertTrue(d.hasChannel(EmoteData.Part.BODY, EmoteData.Axis.X));
+        assertEquals(1, d.keyframeCount(EmoteData.Part.BODY, EmoteData.Axis.X));
+        assertEquals(2f, d.sample(EmoteData.Part.BODY, EmoteData.Axis.X, 0f), 1e-4,
+                "body's own whole-model x value");
 
-        assertTrue(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.PITCH),
-                "body left pitch disabled entirely — torso is the ONLY source, no collision, so its "
-                        + "pitch data must still surface (the fix drops COLLIDING axes only, not all "
-                        + "of torso's non-bend data)");
+        // torso: the bone channel keeps ITS own x — no longer discarded as a "collision".
+        assertTrue(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.X),
+                "torso's x is its own bone track and must no longer be dropped");
+        assertEquals(1, d.keyframeCount(EmoteData.Part.TORSO, EmoteData.Axis.X));
+        assertEquals(99f, d.sample(EmoteData.Part.TORSO, EmoteData.Axis.X, 0f), 1e-4,
+                "torso keeps its own value; it never belonged to body's channel");
+
+        // pitch is declared only on torso — unchanged by the split, still surfaces on the bone.
+        assertTrue(d.hasChannel(EmoteData.Part.TORSO, EmoteData.Axis.PITCH));
         assertEquals(3.0f, d.sample(EmoteData.Part.TORSO, EmoteData.Axis.PITCH, 0f), 1e-4);
+        assertFalse(d.hasChannel(EmoteData.Part.BODY, EmoteData.Axis.PITCH),
+                "body left pitch disabled — it must stay disabled on the whole-model channel");
     }
 
     @Test

@@ -1,9 +1,9 @@
 package dev.steampad.service;
 
 import dev.steampad.config.ConfigManager;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.sound.PositionedSoundInstance;
-import net.minecraft.sound.SoundEvents;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
 
 /** Plays UI navigation sounds when the user navigates mod screens. */
 public final class UiSoundService {
@@ -26,14 +26,14 @@ public final class UiSoundService {
     }
 
     private static void play(float volume) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        mc.getSoundManager().play(PositionedSoundInstance.master(
+        Minecraft mc = Minecraft.getInstance();
+        mc.getSoundManager().play(SimpleSoundInstance.forUI(
             SoundEvents.UI_BUTTON_CLICK.value(), 1.0f, volume));
     }
 
     private static void playBack(float volume) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        mc.getSoundManager().play(PositionedSoundInstance.master(
+        Minecraft mc = Minecraft.getInstance();
+        mc.getSoundManager().play(SimpleSoundInstance.forUI(
             SoundEvents.UI_BUTTON_CLICK.value(), 0.7f, volume));
     }
 }

@@ -10,18 +10,18 @@ import dev.steampad.input.GamepadSnapshot;
 import dev.steampad.input.SteamSlotDispatcher;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.OrderedText;
-import net.minecraft.text.Text;
-
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 
 /**
  * "Configure Buttons" tab — a console-style, four-zone button configurator:
@@ -48,7 +48,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
 
     private int listX, listW, mainW, panelX, panelW;
 
-    private record RowUI(ActionCatalog.Entry entry, net.minecraft.client.gui.widget.ClickableWidget main, int baseY) {}
+    private record RowUI(ActionCatalog.Entry entry, net.minecraft.client.gui.components.AbstractWidget main, int baseY) {}
     private final List<RowUI> rows = new ArrayList<>();
     private final List<int[]> headerPos = new ArrayList<>();   // {baseY}
     private final List<String> headerText = new ArrayList<>(); // translated/literal title
@@ -73,7 +73,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
     private final Deque<Snapshot> undo = new ArrayDeque<>();
 
     public BindingsScreen(Screen parent, long handle) {
-        super(Text.translatable("steampad.screen.bindings.title"));
+        super(Component.translatable("steampad.screen.bindings.title"));
         this.parent = parent;
         this.handle = handle;
     }
@@ -94,7 +94,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         this.panelX = this.width - panelW - 8;
         this.listX = 8;
         this.listW = panelX - 12 - listX;
-        this.mainW = listW - (SQUARE + 4) * 2 - 4;
+        this.mainW = listW - (SQUARE + 4) * 3 - 4;
 
         // Tabs (Basic / Buttons / Advanced) with LB/RB hints handled by the dispatcher.
         SettingsTabs.add(this, SettingsTabs.BUTTONS, parent, handle, listX, HEADER_H + 8, listW);
@@ -102,7 +102,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         int y = contentTop();
         for (ActionCatalog.Section sec : sections) {
             headerPos.add(new int[]{y});
-            headerText.add(sec.titleKey != null ? Text.translatable(sec.titleKey).getString() : sec.literalTitle);
+            headerText.add(sec.titleKey != null ? Component.translatable(sec.titleKey).getString() : sec.literalTitle);
             y += 14;
             for (ActionCatalog.Entry e : sec.entries) {
                 addRow(e, y);
@@ -114,12 +114,13 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
 
         // Side-panel controls.
         int by = this.height - 8 - 20;
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.btn.accept"), b -> close())
-                .dimensions(panelX, by, panelW, 18).build());
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.btn.undo"), b -> doUndo())
-                .dimensions(panelX, by - 22, panelW, 18).build());
-        addDrawableChild(ButtonWidget.builder(Text.translatable("steampad.btn.reset_all"), b -> doResetAll())
-                .dimensions(panelX, by - 44, panelW, 18).build());
+        addRenderableWidget(Button.builder(Component.translatable("steampad.btn.accept"), b -> onClose())
+                .bounds(panelX, by, panelW, 18).build());
+        addRenderableWidget(Button.builder(Component.translatable("steampad.btn.undo"), b -> doUndo())
+                .bounds(panelX, by - 22, panelW, 18).build());
+        addRenderableWidget(Button.builder(Component.translatable("steampad.btn.reset_all"), b -> doResetAll())
+                .tooltip(Tooltip.create(Component.translatable("steampad.bindings.reset_all.tooltip")))
+                .bounds(panelX, by - 44, panelW, 18).build());
 
         if (selected == null && !rows.isEmpty()) selected = rows.get(0).entry;
     }
@@ -129,68 +130,126 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
             case SLIDER -> addSlider(e, y);
             case TOGGLE -> addToggle(e, y);
             case ACTION -> {
-                ButtonWidget main = ButtonWidget.builder(Text.empty(), b -> {
+                Button main = Button.builder(Component.empty(), b -> {
                     selected = e;
                     UiSoundService.playSelect();
                     // ACTION rows open a sub-editor; which one is keyed by the entry's label
                     // (radial editor vs. the emote wheel editor — FASE 63).
                     if ("steampad.act.emote_wheel_config".equals(e.labelKey)) {
-                        client.setScreen(new EmoteWheelScreen(this, handle));
+                        minecraft.setScreen(new EmoteWheelScreen(this, handle));
                     } else {
-                        client.setScreen(new RadialEditorScreen(this, handle));
+                        minecraft.setScreen(new RadialEditorScreen(this, handle));
                     }
-                }).dimensions(listX, y, listW, 20).build();
+                }).bounds(listX, y, listW, 20).build();
                 addScroll(main, y);
                 rows.add(new RowUI(e, main, y));
             }
             case FIXED -> {
-                ButtonWidget main = ButtonWidget.builder(Text.empty(), b -> { selected = e; UiSoundService.playNavigate(); })
-                        .dimensions(listX, y, listW, 20).build();
+                Button main = Button.builder(Component.empty(), b -> { selected = e; UiSoundService.playNavigate(); })
+                        .bounds(listX, y, listW, 20).build();
                 main.active = true;
                 addScroll(main, y);
                 rows.add(new RowUI(e, main, y));
             }
             case LAYER -> {   // Steam Input slot layer: opens the per-context slot editor
-                ButtonWidget main = ButtonWidget.builder(Text.empty(), b -> {
+                Button main = Button.builder(Component.empty(), b -> {
                     selected = e;
                     UiSoundService.playSelect();
                     var ctx = dev.steampad.input.SteamSlotDispatcher.Context.values()[e.slotIndex];
-                    client.setScreen(new SteamSlotLayerScreen(this, ctx, e.labelKey));
-                }).dimensions(listX, y, listW, 20).build();
+                    minecraft.setScreen(new SteamSlotLayerScreen(this, ctx, e.labelKey));
+                }).bounds(listX, y, listW, 20).build();
                 addScroll(main, y);
                 rows.add(new RowUI(e, main, y));
             }
             case SLOT -> {   // Steam Input slot: pick the keybind this slot triggers (no button capture)
-                ButtonWidget main = ButtonWidget.builder(Text.empty(), b -> {
+                Button main = Button.builder(Component.empty(), b -> {
                     selected = e;
                     UiSoundService.playSelect();
-                    client.setScreen(new SteamSlotTargetPickerScreen(this, id -> assignSlot(e, id)));
-                }).dimensions(listX, y, mainW, 20).build();
+                    minecraft.setScreen(new SteamSlotTargetPickerScreen(this, id -> assignSlot(e, id)));
+                }).bounds(listX, y, mainW, 20).build();
                 addScroll(main, y);
                 rows.add(new RowUI(e, main, y));
-                ButtonWidget reset = ButtonWidget.builder(Text.empty(), b -> { selected = e; doResetOne(e); })
-                        .dimensions(listX + mainW + 4, y + 2, SQUARE, SQUARE).build();
+                Button reset = Button.builder(Component.empty(), b -> { selected = e; doResetOne(e); })
+                        .tooltip(Tooltip.create(Component.translatable("steampad.bindings.reset_one.tooltip")))
+                        .bounds(listX + mainW + 4, y + 2, SQUARE, SQUARE).build();
                 addScroll(reset, y);
             }
             default -> { // BIND / EXTRA
-                ButtonWidget main = ButtonWidget.builder(Text.empty(), b -> { selected = e; startRebind(e); })
-                        .dimensions(listX, y, mainW, 20).build();
+                Button main = Button.builder(Component.empty(), b -> { selected = e; startRebind(e); })
+                        .bounds(listX, y, mainW, 20).build();
                 addScroll(main, y);
                 rows.add(new RowUI(e, main, y));
-                ButtonWidget reset = ButtonWidget.builder(Text.empty(), b -> { selected = e; doResetOne(e); })
-                        .dimensions(listX + mainW + 4, y + 2, SQUARE, SQUARE).build();
+                Button reset = Button.builder(Component.empty(), b -> { selected = e; doResetOne(e); })
+                        .tooltip(Tooltip.create(Component.translatable("steampad.bindings.reset_one.tooltip")))
+                        .bounds(listX + mainW + 4, y + 2, SQUARE, SQUARE).build();
                 addScroll(reset, y);
                 // Chord square on BOTH bind and extra (mod) rows — every action can have a chord (S5).
-                ButtonWidget chord = ButtonWidget.builder(Text.empty(), b -> { selected = e; startChord(e); })
-                        .dimensions(listX + mainW + 4 + SQUARE + 4, y + 2, SQUARE, SQUARE).build();
+                Button chord = Button.builder(Component.empty(), b -> { selected = e; startChord(e); })
+                        .tooltip(Tooltip.create(Component.translatable("steampad.bindings.chord.tooltip")))
+                        .bounds(listX + mainW + 4 + SQUARE + 4, y + 2, SQUARE, SQUARE).build();
                 addScroll(chord, y);
+                // HOLD square, right next to the chord one — asked for there by name ("alado de chords
+                // que se pueda asignar el boton por mantener mas tiempo"). Toggles this row's action
+                // between firing on the press edge and firing after a long hold, leaving the button's
+                // other job on a short tap. Disabled, with the reason in its tooltip, wherever the hold
+                // is already spoken for: LongPressGate.blockedReason is the same check the dispatcher
+                // makes live, so this square can never offer something that would not work.
+                Button hold = Button.builder(Component.literal(isHold(e) ? "H" : "·"),
+                        b -> { selected = e; toggleHold(e); })
+                        .bounds(listX + mainW + 4 + (SQUARE + 4) * 2, y + 2, SQUARE, SQUARE).build();
+                String holdBtn = holdButtonOf(e);
+                String blocked = dev.steampad.input.LongPressGate.blockedReason(
+                        cfg, holdBtn, e.kind == ActionCatalog.Kind.EXTRA ? e.labelKey : null);
+                hold.active = !holdBtn.isEmpty() && (blocked == null || isHold(e));
+                // "Not available here: X" is the right framing for a button whose hold is taken by
+                // another gesture, but it reads as a dead end for the far more common case of a row
+                // nobody has assigned yet — which is not a refusal, just a missing first step. That one
+                // gets its own plain sentence saying what Hold will do once a button IS assigned.
+                Component holdTip;
+                if (blocked == null || isHold(e)) {
+                    holdTip = Component.translatable("steampad.bindings.hold.tooltip");
+                } else if ("steampad.hold.blocked.unbound".equals(blocked)) {
+                    holdTip = Component.translatable(blocked);
+                } else {
+                    holdTip = Component.translatable("steampad.layer.mode.blocked",
+                            Component.translatable(blocked));
+                }
+                hold.setTooltip(Tooltip.create(holdTip));
+                addScroll(hold, y);
             }
         }
     }
 
+    // ---- Long-press (hold) mode on the Buttons rows ------------------------------------------
+
+    /** The physical button this row's action sits on ("" = unbound). */
+    private String holdButtonOf(ActionCatalog.Entry e) {
+        if (e.kind == ActionCatalog.Kind.BIND) return GamepadBinds.button(cfg, e.bind);
+        for (var en : cfg.extraBinds.entrySet()) {
+            if (en.getValue().equals(e.labelKey)) return en.getKey();
+        }
+        return "";
+    }
+
+    /** Whether this row already fires on a long press (GAMEPLAY layer). */
+    private boolean isHold(ActionCatalog.Entry e) {
+        String btn = holdButtonOf(e);
+        return !btn.isEmpty() && dev.steampad.input.LongPressGate.isHold(cfg, btn);
+    }
+
+    private void toggleHold(ActionCatalog.Entry e) {
+        String btn = holdButtonOf(e);
+        if (btn.isEmpty()) return;
+        pushUndo();
+        dev.steampad.input.LongPressGate.setHold(cfg, btn, !isHold(e));
+        save();
+        UiSoundService.playSelect();
+        rebuildWidgets();   // the square's own label/state is baked at init, so re-run it
+    }
+
     private void addSlider(ActionCatalog.Entry e, int y) {
         dev.steampad.client.ui.SteamSlider s = new dev.steampad.client.ui.SteamSlider(listX, y, listW, 20,
-                Text.translatable("steampad.cset.vmouse_sensitivity"), cfg.virtualMouseSensitivity,
+                Component.translatable("steampad.cset.vmouse_sensitivity"), cfg.virtualMouseSensitivity,
                 0.2f, 3f, "%.2f", v -> { selected = e; cfg.virtualMouseSensitivity = v; save(); });
         addScroll(s, y);
         rows.add(new RowUI(e, s, y));
@@ -200,7 +259,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
     private void addToggle(ActionCatalog.Entry e, int y) {
         var g = ConfigManager.getGlobal();
         dev.steampad.client.ui.SteamToggle t = new dev.steampad.client.ui.SteamToggle(listX, y, listW, 20,
-                Text.translatable(e.labelKey), g.virtualMouseSnapEnabled,
+                Component.translatable(e.labelKey), g.virtualMouseSnapEnabled,
                 v -> { selected = e; g.virtualMouseSnapEnabled = v; ConfigManager.saveGlobal(); });
         addScroll(t, y);
         rows.add(new RowUI(e, t, y));
@@ -251,7 +310,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         if (e.kind == ActionCatalog.Kind.BIND) {
             GamepadBinds.resetOne(cfg, e.bind);
         } else if (e.kind == ActionCatalog.Kind.EXTRA) {
-            String tk = e.keyBinding.getId();
+            String tk = e.keyBinding.getName();
             cfg.extraBinds.values().removeIf(v -> v.equals(tk));
             cfg.extraChords.remove(tk);
         } else if (e.kind == ActionCatalog.Kind.SLOT) {
@@ -330,7 +389,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         if (listenEntry.kind == ActionCatalog.Kind.BIND) {
             GamepadBinds.assign(cfg, listenEntry.bind, buttonId);
         } else { // EXTRA → map this controller button to the keybind (one button per keybind)
-            String tk = listenEntry.keyBinding.getId();
+            String tk = listenEntry.keyBinding.getName();
             cfg.extraBinds.values().removeIf(v -> v.equals(tk));
             cfg.extraBinds.put(buttonId, tk);
         }
@@ -344,7 +403,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
             GamepadBinds.assignChord(cfg, listenEntry.bind, modifier);
             GamepadBinds.assign(cfg, listenEntry.bind, trigger);
         } else { // EXTRA
-            String tk = listenEntry.keyBinding.getId();
+            String tk = listenEntry.keyBinding.getName();
             cfg.extraBinds.values().removeIf(v -> v.equals(tk));
             cfg.extraBinds.put(trigger, tk);
             cfg.extraChords.put(tk, modifier);
@@ -357,7 +416,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         super.tick();
         // Keep description panel in sync with D-pad / focus navigation.
         if (listen == Listen.NONE) {
-            net.minecraft.client.gui.Element focused = getFocused();
+            net.minecraft.client.gui.components.events.GuiEventListener focused = getFocused();
             if (focused != null) {
                 for (RowUI r : rows) {
                     if (r.main() == focused) { selected = r.entry(); break; }
@@ -377,13 +436,29 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         if (id != null) onCapturedButton(id);
     }
 
+    // keyPressed took loose (key, scancode, modifiers) before 1.21.9 and a KeyEvent record after.
+    // Adapter per version over one shared check.
+    //? if >=1.21.9 {
     @Override
-    public boolean keyPressed(net.minecraft.client.input.KeyInput input) {
-        if (listen != Listen.NONE && input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent input) {
+        if (steampad$escapeCancelsCapture(input.key())) return true;
+        return super.keyPressed(input);
+    }
+    //?} else {
+    /*@Override
+    public boolean keyPressed(int key, int scancode, int modifiers) {
+        if (steampad$escapeCancelsCapture(key)) return true;
+        return super.keyPressed(key, scancode, modifiers);
+    }
+    *///?}
+
+    /** Escape aborts an in-progress bind capture instead of closing the screen. */
+    private boolean steampad$escapeCancelsCapture(int key) {
+        if (listen != Listen.NONE && key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
             stopCapture();
             return true;
         }
-        return super.keyPressed(input);
+        return false;
     }
 
     private void save() { ConfigManager.saveControllerConfig(handle); }
@@ -395,7 +470,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
             case FIXED -> e.fixedGlyph;
             case BIND -> GamepadBinds.button(cfg, e.bind);
             case EXTRA -> {
-                String tk = e.keyBinding.getId();
+                String tk = e.keyBinding.getName();
                 for (var en : cfg.extraBinds.entrySet()) if (en.getValue().equals(tk)) yield en.getKey();
                 yield "";
             }
@@ -407,7 +482,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
     private String chordFor(ActionCatalog.Entry e) {
         return switch (e.kind) {
             case BIND -> GamepadBinds.chord(cfg, e.bind);
-            case EXTRA -> cfg.extraChords.getOrDefault(e.keyBinding.getId(), "");
+            case EXTRA -> cfg.extraChords.getOrDefault(e.keyBinding.getName(), "");
             default -> "";
         };
     }
@@ -415,7 +490,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
     // ---- Render --------------------------------------------------------------------------
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
 
         int top = contentTop(), bottom = contentBottom();
@@ -425,7 +500,7 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
             int by = headerPos.get(i)[0] - scrollY();
             if (by + 12 < top || by > bottom) continue;
             ctx.fill(listX, by + 9, listX + listW, by + 10, DIVIDER);
-            ctx.drawText(textRenderer, Text.literal(headerText.get(i)), listX + 2, by, ACCENT, true);
+            ctx.drawString(font, Component.literal(headerText.get(i)), listX + 2, by, ACCENT, true);
         }
 
         super.render(ctx, mouseX, mouseY, delta);   // widgets (buttons, sliders)
@@ -443,19 +518,20 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
                     || e.kind == ActionCatalog.Kind.TOGGLE) continue;   // these draw themselves
 
             // Label (left).
-            ctx.drawText(textRenderer, trim(labelOf(e), mainW - 40), listX + 6, y + 6, 0xFFE6ECF2, false);
+            ctx.drawString(font, trim(labelOf(e), mainW - 40), listX + 6, y + 6, 0xFFE6ECF2, false);
 
             if (e.kind == ActionCatalog.Kind.ACTION
-                    || e.kind == ActionCatalog.Kind.LAYER) continue;   // open-editor rows: no glyph/squares
+                    || e.kind == ActionCatalog.Kind.LAYER
+                    || e.kind == ActionCatalog.Kind.LAYER) continue;   // open-editor rows: no glyph
 
             if (e.kind == ActionCatalog.Kind.SLOT) {
                 // Steam Input slot: show the assigned target's name (keybind or internal SteamPad
                 // action — not a button icon) + reset square.
                 String kbId = SteamSlotDispatcher.assignedKeybind(e.slotIndex);
-                Text value = SteamSlotDispatcher.displayName(kbId);
-                Text shown = trim(value, mainW / 2);
-                int vw = textRenderer.getWidth(shown);
-                ctx.drawText(textRenderer, shown, listX + mainW - vw - 6, y + 6,
+                Component value = SteamSlotDispatcher.displayName(kbId);
+                Component shown = trim(value, mainW / 2);
+                int vw = font.width(shown);
+                ctx.drawString(font, shown, listX + mainW - vw - 6, y + 6,
                         kbId.isEmpty() ? 0xFF8090A0 : 0xFFB9E28C, false);
                 drawSquare(ctx, listX + mainW + 4, y + 2, "↺");
                 continue;
@@ -468,16 +544,16 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
                     ? chordFor(e) : "";
             int mainRight = (e.kind == ActionCatalog.Kind.FIXED ? listX + listW : listX + mainW);
             if (!chord.isEmpty() && g != null && !g.isEmpty()) {
-                int modW  = ButtonIcon.width(textRenderer, SQUARE, chord);
-                int trigW = ButtonIcon.width(textRenderer, SQUARE, g);
-                int plusW = textRenderer.getWidth("+") + 4;
+                int modW  = ButtonIcon.width(font, SQUARE, chord);
+                int trigW = ButtonIcon.width(font, SQUARE, g);
+                int plusW = font.width("+") + 4;
                 int ix = mainRight - (modW + plusW + trigW) - 6;
-                ButtonIcon.draw(ctx, textRenderer, ix, y + 2, SQUARE, chord);
-                ctx.drawText(textRenderer, Text.literal("+"), ix + modW + 2, y + 6, 0xFF8090A0, false);
-                ButtonIcon.draw(ctx, textRenderer, ix + modW + plusW, y + 2, SQUARE, g);
+                ButtonIcon.draw(ctx, font, ix, y + 2, SQUARE, chord);
+                ctx.drawString(font, Component.literal("+"), ix + modW + 2, y + 6, 0xFF8090A0, false);
+                ButtonIcon.draw(ctx, font, ix + modW + plusW, y + 2, SQUARE, g);
             } else {
-                int iconW = ButtonIcon.width(textRenderer, SQUARE, g == null ? "" : g);
-                ButtonIcon.draw(ctx, textRenderer, mainRight - iconW - 6, y + 2, SQUARE, g == null ? "" : g);
+                int iconW = ButtonIcon.width(font, SQUARE, g == null ? "" : g);
+                ButtonIcon.draw(ctx, font, mainRight - iconW - 6, y + 2, SQUARE, g == null ? "" : g);
             }
 
             if (e.kind == ActionCatalog.Kind.FIXED) continue;   // no reset/chord on fixed rows
@@ -494,32 +570,32 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
 
         renderScrollbar(ctx, listX + listW + 4);
         renderSidePanel(ctx, top);
-        SettingsTabs.renderGlyphs(ctx, textRenderer, listX, HEADER_H + 8, listW);
+        SettingsTabs.renderGlyphs(ctx, font, listX, HEADER_H + 8, listW);
 
         if (listen != Listen.NONE) renderListenOverlay(ctx);
     }
 
-    private void drawSquare(DrawContext ctx, int x, int y, String sym) {
+    private void drawSquare(GuiGraphics ctx, int x, int y, String sym) {
         dev.steampad.client.ui.Draw.fillRoundRect(ctx, x, y, x + SQUARE, y + SQUARE, 3, 0x66101620);
         ctx.fill(x, y, x + SQUARE, y + 1, 0x55FFFFFF);
-        int tw = textRenderer.getWidth(sym);
-        ctx.drawText(textRenderer, Text.literal(sym), x + (SQUARE - tw) / 2, y + 4, 0xFFCBD6E2, false);
+        int tw = font.width(sym);
+        ctx.drawString(font, Component.literal(sym), x + (SQUARE - tw) / 2, y + 4, 0xFFCBD6E2, false);
     }
 
-    private void renderSidePanel(DrawContext ctx, int top) {
+    private void renderSidePanel(GuiGraphics ctx, int top) {
         int x = panelX, w = panelW;
         ctx.fill(x, top, x + w, this.height - 6, PANEL_BG);
         ctx.fill(x, top, x + w, top + 1, ACCENT_DIM);
         int y = top + 6;
 
         if (selected == null) {
-            ctx.drawText(textRenderer, Text.translatable("steampad.bind.panel.none"), x + 6, y, TEXT_MUTED, false);
+            ctx.drawString(font, Component.translatable("steampad.bind.panel.none"), x + 6, y, TEXT_MUTED, false);
             return;
         }
 
-        Text title = labelOf(selected);
-        for (OrderedText l : textRenderer.wrapLines(title, w - 12)) {
-            ctx.drawText(textRenderer, l, x + 6, y, TEXT_PRIMARY, false);
+        Component title = labelOf(selected);
+        for (FormattedCharSequence l : font.split(title, w - 12)) {
+            ctx.drawString(font, l, x + 6, y, TEXT_PRIMARY, false);
             y += 10;
         }
         y += 3;
@@ -527,41 +603,41 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
         if (selected.kind == ActionCatalog.Kind.SLOT) {
             // Assigned target (name) instead of a bound-button icon.
             String kbId = SteamSlotDispatcher.assignedKeybind(selected.slotIndex);
-            Text bound = Text.translatable("steampad.bind.panel.bound").copy().append(" ")
+            Component bound = Component.translatable("steampad.bind.panel.bound").copy().append(" ")
                     .append(SteamSlotDispatcher.displayName(kbId));
-            for (OrderedText l : textRenderer.wrapLines(bound, w - 12)) {
-                ctx.drawText(textRenderer, l, x + 6, y, TEXT_PRIMARY, false);
+            for (FormattedCharSequence l : font.split(bound, w - 12)) {
+                ctx.drawString(font, l, x + 6, y, TEXT_PRIMARY, false);
                 y += 10;
             }
             y += 3;
         } else {
             // Bound-to icon.
             String g = glyphFor(selected);
-            ctx.drawText(textRenderer, Text.translatable("steampad.bind.panel.bound"), x + 6, y, TEXT_MUTED, false);
-            ButtonIcon.draw(ctx, textRenderer, x + 6 + textRenderer.getWidth(Text.translatable("steampad.bind.panel.bound")) + 4,
+            ctx.drawString(font, Component.translatable("steampad.bind.panel.bound"), x + 6, y, TEXT_MUTED, false);
+            ButtonIcon.draw(ctx, font, x + 6 + font.width(Component.translatable("steampad.bind.panel.bound")) + 4,
                     y - 4, SQUARE, g == null ? "" : g);
             y += 16;
         }
 
         // Description / extra info.
-        Text desc;
+        Component desc;
         if (selected.kind == ActionCatalog.Kind.EXTRA) {
-            desc = Text.translatable("steampad.bind.panel.from_key", selected.keyBinding.getBoundKeyLocalizedText());
+            desc = Component.translatable("steampad.bind.panel.from_key", selected.keyBinding.getTranslatedKeyMessage());
         } else if (selected.descKey != null) {
-            desc = Text.translatable(selected.descKey);
+            desc = Component.translatable(selected.descKey);
         } else {
-            desc = Text.empty();
+            desc = Component.empty();
         }
-        for (OrderedText l : textRenderer.wrapLines(desc, w - 12)) {
-            ctx.drawText(textRenderer, l, x + 6, y, TEXT_MUTED, false);
+        for (FormattedCharSequence l : font.split(desc, w - 12)) {
+            ctx.drawString(font, l, x + 6, y, TEXT_MUTED, false);
             y += 10;
         }
 
         // Hint for fixed actions.
         if (selected.kind == ActionCatalog.Kind.FIXED) {
             y += 4;
-            for (OrderedText l : textRenderer.wrapLines(Text.translatable("steampad.bind.panel.fixed"), w - 12)) {
-                ctx.drawText(textRenderer, l, x + 6, y, TEXT_WARN, false);
+            for (FormattedCharSequence l : font.split(Component.translatable("steampad.bind.panel.fixed"), w - 12)) {
+                ctx.drawString(font, l, x + 6, y, TEXT_WARN, false);
                 y += 10;
             }
         }
@@ -575,52 +651,52 @@ public class BindingsScreen extends SteamPadBaseScreen implements TabbedScreen {
                     ? "steampad.bind.panel.slot_desktop"
                     : "steampad.bind.panel.slot_inactive";
             y += 4;
-            for (OrderedText l : textRenderer.wrapLines(Text.translatable(key), w - 12)) {
-                ctx.drawText(textRenderer, l, x + 6, y, TEXT_WARN, false);
+            for (FormattedCharSequence l : font.split(Component.translatable(key), w - 12)) {
+                ctx.drawString(font, l, x + 6, y, TEXT_WARN, false);
                 y += 10;
             }
         }
     }
 
-    private void renderListenOverlay(DrawContext ctx) {
+    private void renderListenOverlay(GuiGraphics ctx) {
         ctx.fill(0, 0, this.width, this.height, 0xC0000000);
-        Text who = Text.translatable(listenEntry.labelKey);
-        Text prompt;
+        Component who = Component.translatable(listenEntry.labelKey);
+        Component prompt;
         if (listen == Listen.CHORD) {
             // Two-step chord capture: ask for the modifier, then the trigger button (S6).
             prompt = capStep == 0
-                    ? Text.translatable("steampad.bindings.listening_chord_first", who)
-                    : Text.translatable("steampad.bindings.listening_chord_second", who,
+                    ? Component.translatable("steampad.bindings.listening_chord_first", who)
+                    : Component.translatable("steampad.bindings.listening_chord_second", who,
                           dev.steampad.client.ui.ButtonIcon.label(capFirst));
         } else {
-            prompt = Text.translatable("steampad.bindings.listening", who);
+            prompt = Component.translatable("steampad.bindings.listening", who);
         }
-        ctx.drawCenteredTextWithShadow(textRenderer, prompt,
+        ctx.drawCenteredString(font, prompt,
                 this.width / 2, this.height / 2 - 6, 0xFFFFFFFF);
-        ctx.drawCenteredTextWithShadow(textRenderer, Text.translatable("steampad.bindings.listening_hint"),
+        ctx.drawCenteredString(font, Component.translatable("steampad.bindings.listening_hint"),
                 this.width / 2, this.height / 2 + 8, ACCENT);
     }
 
     /** Row/panel label for an entry — SLOT labels carry the slot number and its F-key (F13..F22). */
-    private Text labelOf(ActionCatalog.Entry e) {
+    private Component labelOf(ActionCatalog.Entry e) {
         return e.kind == ActionCatalog.Kind.SLOT
-                ? Text.translatable(e.labelKey, e.slotIndex + 1, 13 + e.slotIndex)
-                : Text.translatable(e.labelKey);
+                ? Component.translatable(e.labelKey, e.slotIndex + 1, 13 + e.slotIndex)
+                : Component.translatable(e.labelKey);
     }
 
     /** Truncate a text to fit a pixel width (keeps the list tidy). */
-    private Text trim(Text t, int maxW) {
+    private Component trim(Component t, int maxW) {
         String s = t.getString();
-        if (textRenderer.getWidth(t) <= maxW) return t;
-        while (s.length() > 1 && textRenderer.getWidth(Text.literal(s + "…")) > maxW) {
+        if (font.width(t) <= maxW) return t;
+        while (s.length() > 1 && font.width(Component.literal(s + "…")) > maxW) {
             s = s.substring(0, s.length() - 1);
         }
-        return Text.literal(s + "…");
+        return Component.literal(s + "…");
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         stopCapture();
-        client.setScreen(parent);
+        minecraft.setScreen(parent);
     }
 }

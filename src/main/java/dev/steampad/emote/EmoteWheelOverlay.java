@@ -3,9 +3,9 @@ package dev.steampad.emote;
 import dev.steampad.radial.RadialActionType;
 import dev.steampad.radial.RadialRenderer;
 import dev.steampad.radial.RadialSlot;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 
 /**
  * Renders the dedicated emote wheel overlay — the sibling of {@link dev.steampad.radial.RadialMenuOverlay}
@@ -33,13 +33,16 @@ public final class EmoteWheelOverlay {
 
     /** Selected chip: entity render box/scale as a fraction of the chip radius — deliberately
      *  larger than the chip itself ("Agrega un tamaño más grande para el que está en foco"; raised
-     *  raised again in v0.60.0/D100 ("hazlo aun más grande para que destaque más"), and once more
-     *  in D101 by another explicit +30% ("haz un 30% más grande cuando esta en foco en la rueda"). */
-    private static final float SELECTED_BOX_PER_CHIP_RADIUS = 1.885f;    // 1.45 * 1.30
-    private static final float SELECTED_SCALE_PER_CHIP_RADIUS = 1.43f;   // 1.10 * 1.30
-    /** Non-selected chips: the frozen-frame thumbnails stay inside their chip. */
-    private static final float ENTITY_SCALE_PER_CHIP_RADIUS = 0.55f;
-    private static final float ENTITY_BOX_PER_CHIP_RADIUS = 0.72f;
+     *  raised again in v0.60.0/D100 ("hazlo aun más grande para que destaque más"), once more in D101
+     *  by another explicit +30% ("haz un 30% más grande cuando esta en foco en la rueda"), and once
+     *  more this round (same request, "amplíalo un poco más"). */
+    private static final float SELECTED_BOX_PER_CHIP_RADIUS = 2.45f;    // 1.885 * 1.30
+    private static final float SELECTED_SCALE_PER_CHIP_RADIUS = 1.86f;   // 1.43 * 1.30
+    /** Non-selected chips: the frozen-frame thumbnails stay inside their chip (deliberately kept
+     *  under 1.0 — unlike the selected chip above, these must NOT spill past the chip's own circle;
+     *  raised a bit, D111, "haz un poquito más grande la imagen de previo fija... sin que se salga"). */
+    private static final float ENTITY_SCALE_PER_CHIP_RADIUS = 0.65f;    // 0.55 * ~1.18
+    private static final float ENTITY_BOX_PER_CHIP_RADIUS = 0.85f;      // 0.72 * ~1.18
 
     private static String animatedPreviewId;
     /** Generation token of the playback WE started (see {@code EmoteAnimator#currentGeneration}) —
@@ -51,22 +54,22 @@ public final class EmoteWheelOverlay {
     private static Object realPlaybackSnapshot;
     private static boolean sessionActive;
 
-    private static boolean ownsCurrentPreview(MinecraftClient mc) {
+    private static boolean ownsCurrentPreview(Minecraft mc) {
         return mc.player != null && previewGeneration != -1L
                 && EmoteAnimator.currentGeneration(mc.player.getId()) == previewGeneration;
     }
 
     private EmoteWheelOverlay() {}
 
-    public static void render(DrawContext context, float tickDelta) {
+    public static void render(GuiGraphics context, float tickDelta) {
         if (!EmoteWheelController.isOpen()) {
             stopPreview();
             return;
         }
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        int screenW = mc.getWindow().getScaledWidth();
-        int screenH = mc.getWindow().getScaledHeight();
+        Minecraft mc = Minecraft.getInstance();
+        int screenW = mc.getWindow().getGuiScaledWidth();
+        int screenH = mc.getWindow().getGuiScaledHeight();
         int selectedIdx = EmoteWheelController.getSelectedSlot();
         var slots = EmoteWheelController.getSlots();
         long handle = EmoteWheelController.getActiveHandle();
@@ -111,15 +114,23 @@ public final class EmoteWheelOverlay {
                     int scale = Math.max(4, Math.round(chipR * scaleFrac));
 
                     if (live) {
-                        // Untagged draw → poses from the live playback map at flush (real animation).
-                        InventoryScreen.drawEntity(ctx, sx - half, sy - half, sx + half, sy + half,
-                                scale, 0f, 0f, tickDelta, mc.player);
+                        // Tagged as a GUI preview pass (D111, no pinned frame) → still poses from the
+                        // live playback map at flush (real animation), but the tag is what lets this
+                        // exact draw — never the player's normal WORLD render — act on a
+                        // GUI-preview-only playback (see EmoteAnimator.playForGuiPreview).
+                        EmotePreviewTagger.beginLive();
+                        try {
+                            InventoryScreen.renderEntityInInventoryFollowsMouse(ctx, sx - half, sy - half, sx + half, sy + half,
+                                    scale, 0f, 0f, tickDelta, mc.player);
+                        } finally {
+                            EmotePreviewTagger.end();
+                        }
                     } else {
                         // Duck-tagged draw → this exact queued draw renders frozen at a
                         // representative frame of THIS chip's dance, independent of every other chip.
                         EmotePreviewTagger.begin(data, EmoteAnimator.representativeTick(data));
                         try {
-                            InventoryScreen.drawEntity(ctx, sx - half, sy - half, sx + half, sy + half,
+                            InventoryScreen.renderEntityInInventoryFollowsMouse(ctx, sx - half, sy - half, sx + half, sy + half,
                                     scale, 0f, 0f, tickDelta, mc.player);
                         } finally {
                             EmotePreviewTagger.end();
@@ -133,7 +144,7 @@ public final class EmoteWheelOverlay {
      *  non-loop preview finished and was pruned (the prune left {@code animatedPreviewId} set with
      *  no playback behind it, so the chip silently froze forever — FASE 77 fix). Never fights a
      *  real emote something else started (generation mismatch → back off). */
-    private static void updateAnimatedPreview(MinecraftClient mc, String emoteId, EmoteData data) {
+    private static void updateAnimatedPreview(Minecraft mc, String emoteId, EmoteData data) {
         if (mc.player == null || emoteId == null) return;
         if (animatedPreviewId != null && previewGeneration != -1L
                 && EmoteAnimator.currentGeneration(mc.player.getId()) == -1L) {
@@ -144,7 +155,7 @@ public final class EmoteWheelOverlay {
         if (conflictsWithRealEmote) return;
         if (!emoteId.equals(animatedPreviewId)) {
             if (data == null) return;
-            EmoteAnimator.playFor(mc.player.getId(), data);
+            EmoteAnimator.playForGuiPreview(mc.player.getId(), data);
             animatedPreviewId = emoteId;
             previewGeneration = EmoteAnimator.currentGeneration(mc.player.getId());
         }
@@ -160,7 +171,7 @@ public final class EmoteWheelOverlay {
      * real emote) now owns the slot — leave it completely alone and drop the parked snapshot (the
      * user's new choice replaces the old playback). */
     private static void stopPreview() {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (sessionActive && mc.player != null) {
             int id = mc.player.getId();
             long current = EmoteAnimator.currentGeneration(id);

@@ -1,8 +1,8 @@
 package dev.steampad.input;
 
 import dev.steampad.mixin.HandledScreenAccessor;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.screen.slot.Slot;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.world.inventory.Slot;
 
 /**
  * Soft "snap-to-target" magnetism for the virtual cursor inside container screens — the Bedrock-style
@@ -42,15 +42,15 @@ public final class SlotSnap {
     private SlotSnap() {}
 
     /** All snap/nav targets of the screen: enabled slots + active visible clickable widgets. */
-    private static java.util.List<Target> targets(HandledScreen<?> screen) {
+    private static java.util.List<Target> targets(AbstractContainerScreen<?> screen) {
         java.util.List<Target> out = new java.util.ArrayList<>();
         HandledScreenAccessor acc = (HandledScreenAccessor) screen;
         int ox = acc.steampad$getX(), oy = acc.steampad$getY();
-        for (Slot slot : screen.getScreenHandler().slots) {
-            if (slot.isEnabled()) out.add(new Target(ox + slot.x + 8.0, oy + slot.y + 8.0, SLOT_SNAP_RADIUS, false));
+        for (Slot slot : screen.getMenu().slots) {
+            if (slot.isActive()) out.add(new Target(ox + slot.x + 8.0, oy + slot.y + 8.0, SLOT_SNAP_RADIUS, false));
         }
         for (var el : screen.children()) {
-            if (el instanceof net.minecraft.client.gui.widget.ClickableWidget w
+            if (el instanceof net.minecraft.client.gui.components.AbstractWidget w
                     && w.active && w.visible && w.getWidth() > 0 && w.getHeight() > 0) {
                 out.add(new Target(w.getX() + w.getWidth() / 2.0, w.getY() + w.getHeight() / 2.0, WIDGET_SNAP_RADIUS, true));
             }
@@ -66,7 +66,7 @@ public final class SlotSnap {
         return out;
     }
 
-    public static void apply(HandledScreen<?> screen) {
+    public static void apply(AbstractContainerScreen<?> screen) {
         try {
             double cx = VirtualMouseController.getX(), cy = VirtualMouseController.getY();
             Target best = null;
@@ -96,7 +96,7 @@ public final class SlotSnap {
      * target in the (dx,dy) direction — slots AND buttons (vanilla or modded) alike. Returns true if
      * it moved. This is the "inventory acts in auto mode when you touch the D-pad" behaviour.
      */
-    public static boolean moveToNeighbor(HandledScreen<?> screen, int dx, int dy) {
+    public static boolean moveToNeighbor(AbstractContainerScreen<?> screen, int dx, int dy) {
         try {
             double curX = VirtualMouseController.getX(), curY = VirtualMouseController.getY();
             java.util.List<Target> all = targets(screen);
@@ -131,15 +131,15 @@ public final class SlotSnap {
     }
 
     /** Nearest slot to the cursor with no radius limit (anchor for grid navigation), or null. */
-    public static Slot nearestSlotUnbounded(HandledScreen<?> screen) {
+    public static Slot nearestSlotUnbounded(AbstractContainerScreen<?> screen) {
         try {
             HandledScreenAccessor acc = (HandledScreenAccessor) screen;
             int ox = acc.steampad$getX(), oy = acc.steampad$getY();
             double cx = VirtualMouseController.getX(), cy = VirtualMouseController.getY();
             Slot best = null;
             double bestSq = Double.MAX_VALUE;
-            for (Slot slot : screen.getScreenHandler().slots) {
-                if (!slot.isEnabled()) continue;
+            for (Slot slot : screen.getMenu().slots) {
+                if (!slot.isActive()) continue;
                 double dx = (ox + slot.x + 8.0) - cx;
                 double dy = (oy + slot.y + 8.0) - cy;
                 double d = dx * dx + dy * dy;
@@ -155,15 +155,15 @@ public final class SlotSnap {
      *  — kept in sync with {@link #apply}'s own slot radius so the highlighted cell always matches
      *  what the magnetism would actually settle on (never highlights a slot the cursor hasn't really
      *  reached yet, e.g. while it's sitting on a mod button between two slots). */
-    public static Slot nearestSlot(HandledScreen<?> screen) {
+    public static Slot nearestSlot(AbstractContainerScreen<?> screen) {
         try {
             HandledScreenAccessor acc = (HandledScreenAccessor) screen;
             int ox = acc.steampad$getX(), oy = acc.steampad$getY();
             double cx = VirtualMouseController.getX(), cy = VirtualMouseController.getY();
             Slot best = null;
             double bestSq = SLOT_SNAP_RADIUS * SLOT_SNAP_RADIUS;
-            for (Slot slot : screen.getScreenHandler().slots) {
-                if (!slot.isEnabled()) continue;
+            for (Slot slot : screen.getMenu().slots) {
+                if (!slot.isActive()) continue;
                 double dx = (ox + slot.x + 8.0) - cx;
                 double dy = (oy + slot.y + 8.0) - cy;
                 double d = dx * dx + dy * dy;
@@ -176,7 +176,7 @@ public final class SlotSnap {
     }
 
     /** Screen-space top-left of a slot's 16x16 cell, as {x, y}, or null. */
-    public static int[] slotRect(HandledScreen<?> screen, Slot slot) {
+    public static int[] slotRect(AbstractContainerScreen<?> screen, Slot slot) {
         try {
             HandledScreenAccessor acc = (HandledScreenAccessor) screen;
             return new int[]{acc.steampad$getX() + slot.x, acc.steampad$getY() + slot.y};

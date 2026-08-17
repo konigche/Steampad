@@ -1,8 +1,7 @@
 package dev.steampad.input;
 
-import net.minecraft.util.math.Vec3d;
-
 import java.util.concurrent.ThreadLocalRandom;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Purely cosmetic "impact feedback" — screen shake + a brief FOV punch-in — layered on top of
@@ -30,8 +29,12 @@ public final class JuiceController {
     // efecto, muy poco") — a single tunable knob applied to every trigger below, instead of hand-
     // adjusting each of HapticsController's half-dozen call sites individually and risking an
     // inconsistent bump across events. A modest, deliberately small nudge, matching "muy poco".
-    private static final double SHAKE_BOOST = 1.2;
-    private static final float FOV_KICK_BOOST = 1.2f;
+    //
+    // Bumped again this round (feedback: "funciona pero es muy debil, subele la intensidad, sobre
+    // todo cuando cae de un lugar alto") — see also tickFallImpact's own fovKick, which this round
+    // added for the first time (falls previously only shook the camera, no FOV punch at all).
+    private static final double SHAKE_BOOST = 1.6;
+    private static final float FOV_KICK_BOOST = 1.5f;
 
     // ---- Screen shake ---------------------------------------------------------------------------
 
@@ -52,22 +55,22 @@ public final class JuiceController {
         shakeDecayPerSec = amplitude / Math.max(0.05, durationMs / 1000.0);
     }
 
-    /** World-space camera offset to add this frame — {@link Vec3d#ZERO} once fully decayed. */
-    public static Vec3d cameraOffset() {
+    /** World-space camera offset to add this frame — {@link Vec3#ZERO} once fully decayed. */
+    public static Vec3 cameraOffset() {
         long now = System.nanoTime();
         double dt = lastShakeNanos == 0L ? (1.0 / 60.0) : (now - lastShakeNanos) / 1_000_000_000.0;
         lastShakeNanos = now;
         if (dt <= 0 || dt > 0.25) dt = 1.0 / 60.0;
 
-        if (shakeIntensity <= 0.0008) { shakeIntensity = 0.0; return Vec3d.ZERO; }
+        if (shakeIntensity <= 0.0008) { shakeIntensity = 0.0; return Vec3.ZERO; }
         shakeIntensity = Math.max(0.0, shakeIntensity - shakeDecayPerSec * dt);
-        if (shakeIntensity <= 0.0) return Vec3d.ZERO;
+        if (shakeIntensity <= 0.0) return Vec3.ZERO;
 
         var r = ThreadLocalRandom.current();
         double x = (r.nextDouble() * 2 - 1) * shakeIntensity;
         double y = (r.nextDouble() * 2 - 1) * shakeIntensity * 0.5;   // less vertical jitter — reads as impact, not seasick
         double z = (r.nextDouble() * 2 - 1) * shakeIntensity;
-        return new Vec3d(x, y, z);
+        return new Vec3(x, y, z);
     }
 
     // ---- Impact FOV kick --------------------------------------------------------------------------

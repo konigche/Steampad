@@ -5,7 +5,7 @@ import dev.steampad.config.ControllerConfig;
 import dev.steampad.radial.RadialMenuController;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.Minecraft;
 
 /**
  * Applies right-stick camera look <b>every frame</b> (not every tick), so the camera is smooth and
@@ -60,9 +60,10 @@ public final class CameraController {
         lastNanos = now;
         if (dt <= 0 || dt > 0.25) dt = 1.0 / 60.0;   // clamp pauses/hitches
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player == null || mc.currentScreen != null) return;
-        if (RadialMenuController.isOpen() || dev.steampad.emote.EmoteWheelController.isOpen()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.screen != null) return;
+        if (RadialMenuController.isOpen() || dev.steampad.emote.EmoteWheelController.isOpen()
+                || dev.steampad.itemradial.ItemRadialController.isOpen()) return;
 
         long handle = ActiveControllerService.getActiveHandle();
         if (handle == 0L || !ControllerManager.isFallbackHandle(handle)) return;
@@ -88,14 +89,55 @@ public final class CameraController {
 
         // Third-person free-look: while ON and the player is actively holding THIRD_PERSON_ADJUST,
         // the stick repositions the camera offset instead of turning anything — skip look entirely.
-        boolean freeLook = ThirdPersonCameraController.isFreeLookEnabled();
+        //
+        // Bug fixed here (feedback: "cuando se activa movimiento libre en los ajustes en primera
+        // persona deja de funcionar el movimiento de camara... esto no debe de afectar en primera
+        // persona"): this used to be just isFreeLookEnabled() — the user's persisted TOGGLE, with no
+        // perspective check. turnFreeCamera() is a silent no-op until freeInitialized is seeded, and
+        // that only ever happens inside computeFreePoseInner() when NOT in first person (it returns
+        // null early otherwise) — so with the toggle on but the player still in first person, every
+        // frame here called turnFreeCamera() (which did nothing) INSTEAD of changeLookDirection(),
+        // and the right stick stopped turning the camera at all until switching to third person.
+        // Requiring !isFirstPerson() here makes first-person camera look byte-for-byte the vanilla/
+        // normal path regardless of the free-look toggle, exactly like it was before free-look shipped.
+        //
+        // Front-view (mirror mode, F5×2) — D123, third iteration of this decision and the one that
+        // matches the actual request: the stick routes to the PLAYER here (vanilla's own front-view
+        // convention: the stick turns your character, and the camera stays on your face), while the
+        // camera POSE itself still comes from the free pipeline, smoothly trailing the player's front
+        // (see ThirdPersonCameraController.computeFreePoseInner's mirror block). D120 excluded both
+        // (→ vanilla's hard-locked laggy camera), D121 excluded neither (→ mirror mode became a
+        // second back view, "parece que desapareció") — mirror identity lives in the INPUT ROUTING,
+        // smoothness lives in the POSE, and they needed opposite answers.
+        // isMirrorMode (not raw isFrontView): during a REAL emote the free orbit wins even in front
+        // view — the dancer's body is frozen, so routing the stick to it would do nothing, and
+        // orbiting the dance is the emote camera's whole purpose (D100).
+        //
+        // Mounted (D170/D171): the stick routes to the PLAYER by default (steering — D170's fix
+        // depends on mc.player.turn() still being called every tick a mount is ridden), UNLESS the
+        // player deliberately shoves the stick past MOUNTED_FREE_LOOK_ENTER_MAG, which hands it to
+        // the free camera instead (D171 round 2, feedback: "cuando presione el stick derecho este
+        // la camara libre actual... cuando lo suelte pase un pequeño instante y regrese hacia donde
+        // se dirige la parte de enfrente" — a genuinely decoupled look, not just a subtle chase-lag on
+        // top of steering, which the first D171 attempt turned out to be too subtle to notice). See
+        // ThirdPersonCameraController.tickMountedFreeLook's own doc for the full gesture state
+        // machine (magnitude-gated on purpose, not duration-gated, so an ordinary sustained steering
+        // hold — this project's own look-based turning has no "instant snap", any real turn requires
+        // holding the stick for a while — never gets silently handed off to the camera mid-turn).
+        double mag = Math.min(1.0, Math.sqrt((double) r[0] * r[0] + (double) r[1] * r[1]));
+        boolean mountedFreeLookNow = ThirdPersonCameraController.tickMountedFreeLook(mc, mag, dt);
+
+        boolean freeLook = (ThirdPersonCameraController.isFreeLookEnabled()
+                && !mc.options.getCameraType().isFirstPerson()
+                && !ThirdPersonCameraController.isMirrorMode(mc)
+                && !ThirdPersonCameraController.isMounted(mc))
+                || mountedFreeLookNow;
         if (freeLook && ThirdPersonCameraController.isAdjusting()) {
             ThirdPersonCameraController.adjustOffset(r[0] * dt * 2.0, -r[1] * dt * 2.0);
             edgeHoldSec = 0.0;
             return;
         }
 
-        double mag = Math.min(1.0, Math.sqrt((double) r[0] * r[0] + (double) r[1] * r[1]));
         if (mag < 0.001) {
             edgeHoldSec = 0.0;
             // AAA-style aim assist can still gently pull the camera onto a target with a fully idle
@@ -104,10 +146,7 @@ public final class CameraController {
             // (turn boost, sensitivity curve, zoom look-slow) only applies while actively steering, so
             // this is the one piece that still needs to run when the stick is at rest.
             double[] idleMagnet = AimAssistController.magnetism(cfg, 0.0, dt);
-            if (idleMagnet[0] != 0.0 || idleMagnet[1] != 0.0) {
-                if (freeLook) ThirdPersonCameraController.turnFreeCamera(idleMagnet[0], idleMagnet[1]);
-                else mc.player.changeLookDirection(idleMagnet[0] / LOOK_UNIT, idleMagnet[1] / LOOK_UNIT);
-            }
+            applyLook(mc, freeLook, idleMagnet[0], idleMagnet[1], dt);
             return;
         }
 
@@ -158,11 +197,45 @@ public final class CameraController {
         yawDeg += magnet[0];
         pitchDeg += magnet[1];
 
+        applyLook(mc, freeLook, yawDeg, pitchDeg, dt);
+    }
+
+    /**
+     * Final step for every look-input path: optionally runs the delta through the cinematic-bars
+     * stabilizer, then dispatches to the free camera or the player's own turn.
+     *
+     * <p><b>Must be the ONLY exit point that applies look input</b> — see the bug this fixes. The
+     * stabilizer carries a leftover motion buffer between ticks (see {@code ZoomController.stabilize}),
+     * and this method used to be inlined only at the bottom of {@link #frame}, past the early return
+     * for an idle stick (reported: "cuando se mueve se detiene muy de golpe"). The moment the player
+     * released the stick, {@code frame()} took that early return and NEVER called {@code stabilize()}
+     * again — so whatever motion the buffer hadn't drained yet simply froze instead of easing out.
+     * Routing the idle path (which still needs to feed idle aim-assist magnetism, possibly zero,
+     * through the SAME drain) through this one helper is what keeps the buffer draining every tick
+     * regardless of which path produced this tick's raw delta.
+     */
+    private static void applyLook(Minecraft mc, boolean freeLook, double yawDeg, double pitchDeg, double dt) {
+        if (ZoomController.stabilizerActive()) {
+            double[] eased = ZoomController.stabilize(yawDeg, pitchDeg, dt);
+            yawDeg = eased[0];
+            pitchDeg = eased[1];
+        }
+        if (yawDeg == 0.0 && pitchDeg == 0.0) return;
         // changeLookDirection multiplies by 0.15; divide so our value is in real degrees. Free-look
         // (third person, decoupled) redirects the exact same shaped output to the free camera's own
         // rotation instead of the player's — every curve/boost/assist/zoom-slow computed above is
         // already folded into yawDeg/pitchDeg by this point, so nothing else here needs to change.
-        if (freeLook) ThirdPersonCameraController.turnFreeCamera(yawDeg, pitchDeg);
-        else mc.player.changeLookDirection(yawDeg / LOOK_UNIT, pitchDeg / LOOK_UNIT);
+        if (freeLook) {
+            ThirdPersonCameraController.turnFreeCamera(yawDeg, pitchDeg);
+        } else {
+            mc.player.turn(yawDeg / LOOK_UNIT, pitchDeg / LOOK_UNIT);
+            // Mounted steering keeps driving player.turn() above (D170 depends on it), but the chase
+            // camera must ALSO see this frame's yaw so a small nudge produces a small camera move —
+            // see nudgeMountedChaseYaw's doc for why the ease alone could not deliver that.
+            if (ThirdPersonCameraController.isMounted(mc)
+                    && !mc.options.getCameraType().isFirstPerson()) {
+                ThirdPersonCameraController.nudgeMountedChaseYaw(yawDeg);
+            }
+        }
     }
 }

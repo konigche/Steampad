@@ -51,6 +51,28 @@ public interface Sdl3Native extends Library {
     int SDL_GAMEPAD_AXIS_LEFT_TRIGGER = 4;
     int SDL_GAMEPAD_AXIS_RIGHT_TRIGGER = 5;
 
+    // SDL3 SDL_GamepadType enum — SDL's OWN device classification (VID/PID-backed, from its bundled
+    // gamecontrollerdb), independent of whatever string SDL_GetGamepadName returns. A pad in an
+    // Xbox-compatible mode (e.g. an 8BitDo switched to XInput mode) reports XBOX360/XBOXONE here even
+    // when its name string doesn't obviously say "xbox" or the brand.
+    int SDL_GAMEPAD_TYPE_UNKNOWN = 0;
+    int SDL_GAMEPAD_TYPE_STANDARD = 1;
+    int SDL_GAMEPAD_TYPE_XBOX360 = 2;
+    int SDL_GAMEPAD_TYPE_XBOXONE = 3;
+    int SDL_GAMEPAD_TYPE_PS3 = 4;
+    int SDL_GAMEPAD_TYPE_PS4 = 5;
+    int SDL_GAMEPAD_TYPE_PS5 = 6;
+    int SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO = 7;
+    int SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT = 8;
+    int SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT = 9;
+    int SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR = 10;
+
+    // SDL3 SDL_JoystickConnectionState enum — real link type, replacing name-string/comment guessing.
+    int SDL_JOYSTICK_CONNECTION_INVALID = -1;
+    int SDL_JOYSTICK_CONNECTION_UNKNOWN = 0;
+    int SDL_JOYSTICK_CONNECTION_WIRED = 1;
+    int SDL_JOYSTICK_CONNECTION_WIRELESS = 2;
+
     byte SDL_Init(int flags);
     /** Set an SDL hint (must be set BEFORE init for joystick hints). Returns bool. */
     byte SDL_SetHint(String name, String value);
@@ -67,6 +89,10 @@ public interface Sdl3Native extends Library {
     void SDL_CloseGamepad(Pointer gamepad);
     String SDL_GetGamepadName(Pointer gamepad);
 
+    /** The instance id an open gamepad currently IS, or 0 on failure. Since SDL 3.2.0. Used to catch a
+     *  cached {@code SDL_Gamepad*} that no longer corresponds to the id it is filed under. */
+    int SDL_GetGamepadID(Pointer gamepad);
+
     byte SDL_GetGamepadButton(Pointer gamepad, int button);
     short SDL_GetGamepadAxis(Pointer gamepad, int axis);
 
@@ -75,6 +101,31 @@ public interface Sdl3Native extends Library {
 
     /** True if the gamepad supports rumble (diagnoses silent vibration). */
     byte SDL_GamepadHasRumble(Pointer gamepad);
+
+    /** SDL's own device classification (see SDL_GAMEPAD_TYPE_* above). */
+    int SDL_GetGamepadType(Pointer gamepad);
+
+    /** USB vendor/product ID (Uint16, 0 if unknown to SDL) — brand identity that survives a pad
+     *  switching compatibility modes, unlike its reported name. */
+    short SDL_GetGamepadVendor(Pointer gamepad);
+    short SDL_GetGamepadProduct(Pointer gamepad);
+
+    /** USB bcdDevice / product version (Uint16, 0 if unknown). Recorded with VID/PID as extra device
+     *  detail for the persistent controller identity. */
+    short SDL_GetGamepadProductVersion(Pointer gamepad);
+
+    /**
+     * Per-unit serial number, or NULL when SDL has none — the only thing that can tell two pads of the
+     * SAME model apart (VID/PID are identical for both). SDL only knows it when the device was opened
+     * through its HIDAPI driver, so callers must treat null/blank as "unavailable this session", never
+     * as a difference between devices. Declared after the other entry points on purpose: a libSDL3 old
+     * enough to lack the symbol only fails when this is actually called, and every call site catches.
+     */
+    String SDL_GetGamepadSerial(Pointer gamepad);
+
+    /** Wired vs wireless vs unknown (see SDL_JOYSTICK_CONNECTION_* above) — the actual link type,
+     *  instead of guessing it from a name string or a pairing-mode assumption. */
+    int SDL_GetGamepadConnectionState(Pointer gamepad);
 
     /** Runtime SDL version as a single int (e.g. 3002010 = 3.2.10). */
     int SDL_GetVersion();

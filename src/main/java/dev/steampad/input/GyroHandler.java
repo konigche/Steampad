@@ -1,7 +1,7 @@
 package dev.steampad.input;
 
 import dev.steampad.util.MathUtil;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.Minecraft;
 
 /**
  * Converts gyroscope data from Steam Input into camera movement.
@@ -89,9 +89,9 @@ public final class GyroHandler {
     }
 
     private static void applyToCamera(float deltaYaw, float deltaPitch) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        mc.player.changeLookDirection(deltaYaw, deltaPitch);
+        mc.player.turn(deltaYaw, deltaPitch);
     }
 
     public static void setToggleState(boolean state) {

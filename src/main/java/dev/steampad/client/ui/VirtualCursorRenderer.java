@@ -5,11 +5,11 @@ import dev.steampad.input.SlotSnap;
 import dev.steampad.input.VirtualMouseController;
 import dev.steampad.service.ActiveControllerService;
 import dev.steampad.service.ControllerManager;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.screen.slot.Slot;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.inventory.Slot;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -35,14 +35,14 @@ public final class VirtualCursorRenderer {
         osHiddenState = -1;
     }
 
-    public static void render(DrawContext ctx) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.currentScreen == null) return;
+    public static void render(GuiGraphics ctx) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen == null) return;
         long tProf = dev.steampad.util.TickProfiler.begin();
         // Smooth, frame-rate-independent cursor motion (integrate the stick velocity each frame).
         VirtualMouseController.frameUpdate();
         dev.steampad.util.TickProfiler.end(dev.steampad.util.TickProfiler.CURSOR_RENDER, tProf);
-        long window = mc.getWindow().getHandle();
+        long window = dev.steampad.compat.mc.WindowCompat.handle(mc.getWindow());
 
         long handle = ActiveControllerService.getActiveHandle();
         boolean fallback = handle != 0L && ControllerManager.isFallbackHandle(handle);
@@ -66,7 +66,7 @@ public final class VirtualCursorRenderer {
         int y = (int) Math.round(VirtualMouseController.getY());
 
         // Container: white selection corner-brackets around the slot under the cursor.
-        if (mc.currentScreen instanceof HandledScreen<?> hs) {
+        if (mc.screen instanceof AbstractContainerScreen<?> hs) {
             Slot slot = SlotSnap.nearestSlot(hs);
             int[] r = slot == null ? null : SlotSnap.slotRect(hs, slot);
             if (r != null) {
@@ -81,8 +81,8 @@ public final class VirtualCursorRenderer {
     }
 
     /** Small top-left badge: "Mouse: On / Off / Auto" — shown briefly after a change, then fades. */
-    private static void drawModeBadge(DrawContext ctx) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+    private static void drawModeBadge(GuiGraphics ctx) {
+        Minecraft mc = Minecraft.getInstance();
         float a = VirtualMouseController.badgeAlpha();
         if (a <= 0f) return;
         VirtualMouseController.Mode mode = VirtualMouseController.getMode();
@@ -96,14 +96,14 @@ public final class VirtualCursorRenderer {
             case OFF -> 0xFFFF6060;
             case AUTO -> 0xFFFFC044;
         };
-        Text label = Text.translatable("steampad.vmouse.label").append(": ").append(Text.translatable(key));
-        int tw = mc.textRenderer.getWidth(label);
+        Component label = Component.translatable("steampad.vmouse.label").append(": ").append(Component.translatable(key));
+        int tw = mc.font.width(label);
         int x = 6, y = 6, padX = 6, h = 14;
         int w = tw + padX * 2 + 10;
         Draw.fillRoundRect(ctx, x, y, x + w, y + h, 3, withAlpha(0xCC121A24, a));
         ctx.fill(x, y, x + 2, y + h, withAlpha(dot, a));
         Draw.fillCircle(ctx, x + padX + 2, y + h / 2, 3, withAlpha(dot, a));
-        ctx.drawText(mc.textRenderer, label, x + padX + 8, y + (h - 8) / 2, withAlpha(0xFFE6ECF2, a), false);
+        ctx.drawString(mc.font, label, x + padX + 8, y + (h - 8) / 2, withAlpha(0xFFE6ECF2, a), false);
     }
 
     private static int withAlpha(int argb, float a) {
@@ -113,7 +113,7 @@ public final class VirtualCursorRenderer {
     }
 
     /** Four corner brackets around a cell (Bedrock/console selection look). */
-    private static void drawSlotBrackets(DrawContext ctx, int x, int y, int w, int h, int c) {
+    private static void drawSlotBrackets(GuiGraphics ctx, int x, int y, int w, int h, int c) {
         int len = 5, t = 2;
         ctx.fill(x, y, x + len, y + t, c);
         ctx.fill(x, y, x + t, y + len, c);
@@ -130,7 +130,7 @@ public final class VirtualCursorRenderer {
         // (GLFW_CURSOR_DISABLED), overwriting the mode with HIDDEN/NORMAL silently kills mouse
         // camera deltas while vanilla still believes it's grabbed — the "mouse camera dead in
         // gameplay" desync. This method must only ever manage the pointer while a screen owns it.
-        if (MinecraftClient.getInstance().mouse.isCursorLocked()) return;
+        if (Minecraft.getInstance().mouseHandler.isMouseGrabbed()) return;
         int want = hidden ? 1 : 0;
         if (osHiddenState == want) return;   // only call the native API on a real transition
         osHiddenState = want;

@@ -74,16 +74,25 @@ class ConfigSerializationTest {
 
     @Test
     void testRadialConfigDefaultsHaveEightSlots() {
-        // Multi-wheel contract: defaults have exactly ONE wheel with 8 active slots and its slot
-        // list padded to MAX_SLOTS. Extra wheels are added/removed from the editor (max MAX_WHEELS).
+        // Multi-wheel contract: defaults now ship with the user's own wheel (8 active slots, padded
+        // to MAX_SLOTS) PLUS the built-in vanilla-shortcuts wheel, seeded once by normalize() and
+        // kept pinned to the LAST page (feedback round 2: "nunca debe ser la primera... si se crea
+        // una rueda mandar esta a lo último") — addWheel() inserts new user wheels BEFORE it instead
+        // of appending after, so it never needs a separate reorder pass to stay last.
         RadialConfig defaults = RadialConfig.defaults();
-        assertEquals(1, defaults.wheelCount(), "Defaults have a single wheel");
-        assertEquals(8, defaults.slotCountFor(0), "Wheel defaults to 8 active slots");
+        assertEquals(2, defaults.wheelCount(), "Defaults: the user's wheel + the vanilla-shortcuts wheel");
+        assertEquals(8, defaults.slotCountFor(0), "Wheel 0 defaults to 8 active slots");
         assertEquals(RadialConfig.MAX_SLOTS, defaults.slotsFor(0).size(), "Slot list padded to MAX_SLOTS");
-        assertEquals(1, defaults.addWheel(), "Adding a wheel returns its page index");
-        assertEquals(2, defaults.wheelCount(), "Wheel was added");
-        assertTrue(defaults.removeWheel(1), "Added wheel can be removed");
-        assertFalse(defaults.removeWheel(0), "The last wheel can never be removed");
+        assertTrue(defaults.wheels.get(1).vanillaShortcutsWheel, "Wheel 1 is the vanilla-shortcuts wheel");
+
+        assertEquals(1, defaults.addWheel(), "A new user wheel is inserted BEFORE the vanilla-shortcuts one");
+        assertEquals(3, defaults.wheelCount(), "Wheel was added");
+        assertTrue(defaults.wheels.get(2).vanillaShortcutsWheel, "Vanilla-shortcuts wheel is still last");
+
+        assertTrue(defaults.removeWheel(1), "The added wheel can be removed");
+        assertEquals(2, defaults.wheelCount(), "Back to 2 wheels");
+        assertTrue(defaults.removeWheel(1), "The vanilla-shortcuts wheel itself can be removed (it's optional)");
+        assertFalse(defaults.removeWheel(0), "The last remaining wheel can never be removed");
     }
 
     @Test

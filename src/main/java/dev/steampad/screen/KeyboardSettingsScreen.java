@@ -3,11 +3,11 @@ package dev.steampad.screen;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.GlobalConfig;
 import dev.steampad.config.PixelTheme;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.screen.ScreenTexts;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
 
 /**
  * Settings for the controller-driven virtual keyboard. Two-column layout (list + description) like the
@@ -23,7 +23,7 @@ public class KeyboardSettingsScreen extends ColumnSettingsScreen {
     private int previewBaseY;
 
     public KeyboardSettingsScreen(Screen parent) {
-        super(Text.translatable("steampad.keyboard.settings.title"));
+        super(Component.translatable("steampad.keyboard.settings.title"));
         this.parent = parent;
     }
 
@@ -62,14 +62,14 @@ public class KeyboardSettingsScreen extends ColumnSettingsScreen {
 
         finishLayout();
 
-        addDrawableChild(ButtonWidget.builder(ScreenTexts.BACK, b -> close())
-                .dimensions(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_BACK, b -> onClose())
+                .bounds(this.width / 2 - 75, this.height - FOOTER_H + 7, 150, 20).build());
     }
 
     private void save() { ConfigManager.saveGlobal(); }
 
     @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics ctx, int mouseX, int mouseY, float delta) {
         renderChrome(ctx);
         super.render(ctx, mouseX, mouseY, delta);
         renderColumns(ctx, mouseX, mouseY);
@@ -78,10 +78,10 @@ public class KeyboardSettingsScreen extends ColumnSettingsScreen {
         if (y + PREVIEW_H >= contentTop() - 2 && y <= contentBottom() + 2) {
             PixelTheme t = cfg.virtualKeyboardTheme == null ? PixelTheme.VANILLA : cfg.virtualKeyboardTheme;
             dev.steampad.client.ui.VirtualKeyboardRenderer.renderThemePreview(
-                    ctx, textRenderer, listX(), y, listW(), PREVIEW_H, t);
+                    ctx, font, listX(), y, listW(), PREVIEW_H, t);
         }
     }
 
     @Override
-    public void close() { client.setScreen(parent); }
+    public void onClose() { minecraft.setScreen(parent); }
 }

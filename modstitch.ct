@@ -1,0 +1,47 @@
+accessWidener v1 named
+
+# Single source of truth for widened access across every loader: ModStitch converts this into a
+# Fabric access widener or a NeoForge access transformer depending on the variant. Names are in
+# Mojang mappings — see PORT_MULTIVERSION.md S1 for how they were derived from the real mapping
+# trees (not by hand).
+#
+# IMPORTANT: this file must NOT contain Stonecutter `//?` conditionals. ModStitch parses it itself at
+# configuration time, before Stonecutter runs, and its access-widener parser rejects those comments
+# outright ("Failed to parse [//?, if, ...]"). Per-version divergence is handled by the per-variant
+# override file instead — see PORT_MULTIVERSION.md S3.3 category A.
+#
+# The synthetic-input entries below are the 1.21.9+ shapes: that release reworked the whole input
+# layer into records instead of loose parameters. Per-version reality, verified with javap:
+#
+#            | 1.21.1                                | 1.21.10
+#  Mouse     | onPress(long,int,int,int)     PRIVATE | onButton(long,MouseButtonInfo,int)  PRIVATE
+#  Key press | keyPress(long,int,int,int,int) PUBLIC | keyPress(long,int,KeyEvent)         PRIVATE
+#  Char      | charTyped(long,int,int)       PRIVATE | charTyped(long,CharacterEvent)      PRIVATE
+
+# MouseHandler's button callback is private — widen so VirtualMouseController/ActionExecutor can call
+# it. Routing synthetic clicks through the REAL callback (rather than calling Screen.mouseClicked
+# directly) is what makes Architectury-based mods see them; see the KeyboardHandler note below.
+accessible method net/minecraft/client/MouseHandler onButton (JLnet/minecraft/client/input/MouseButtonInfo;I)V
+# MouseHandler.onMove is private — widen so VirtualMouseController can move the virtual cursor.
+# Same signature on every supported version.
+accessible method net/minecraft/client/MouseHandler onMove (JDD)V
+# KeyboardHandler.keyPress / charTyped let VirtualKeyboard route synthetic typing through the real
+# methods instead of calling Screen.keyPressed/charTyped directly. Mods built on Architectury API
+# (e.g. Roughly Enough Items) intercept input via @WrapOperation mixins on the
+# Screen.mouseClicked/keyPressed/charTyped CALL SITES inside MouseHandler and KeyboardHandler — a
+# direct call to the Screen method from elsewhere in the codebase never reaches those call sites, so
+# those mods never see synthetic input from the virtual mouse/keyboard. Routing through the real
+# methods fixes that for REI and any other Architectury-based mod, not just REI specifically
+# (feedback: "no es integrarlo, es interactuar con el").
+accessible method net/minecraft/client/KeyboardHandler keyPress (JILnet/minecraft/client/input/KeyEvent;)V
+accessible method net/minecraft/client/KeyboardHandler charTyped (JLnet/minecraft/client/input/CharacterEvent;)V
+# BossHealthOverlay.events is package-private — widen so HapticsController can check whether a nearby
+# entity has an active boss bar (boss detection: entity UUID present as a boss-bar key). Same field
+# name on every supported version.
+accessible field net/minecraft/client/gui/components/BossHealthOverlay events Ljava/util/Map;
+# AbstractSelectionList$Entry is protected in the InnerClasses attribute, so it cannot be named from
+# our package — needed by AbstractSelectionListInvoker, which calls vanilla's own scroll-into-view so
+# D-pad navigation of a vanilla entry list (world select, server list) actually scrolls. Class name is
+# identical on every supported version; only the METHOD name differs (scrollToEntry vs ensureVisible),
+# which is handled by a Stonecutter conditional in the invoker itself.
+accessible class net/minecraft/client/gui/components/AbstractSelectionList$Entry

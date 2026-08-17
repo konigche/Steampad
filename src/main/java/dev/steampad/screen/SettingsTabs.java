@@ -1,10 +1,10 @@
 package dev.steampad.screen;
 
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * The shared three-tab header for per-controller settings — Basic / Configure Buttons / Advanced.
@@ -39,8 +39,8 @@ public final class SettingsTabs {
      * {@link dev.steampad.client.ui.ButtonIcon}, vector fallback). Call from the screen's render()
      * with the same x/y/totalW passed to {@link #add}.
      */
-    public static void renderGlyphs(net.minecraft.client.gui.DrawContext ctx,
-                                    net.minecraft.client.font.TextRenderer tr,
+    public static void renderGlyphs(net.minecraft.client.gui.GuiGraphics ctx,
+                                    net.minecraft.client.gui.Font tr,
                                     int x, int y, int totalW) {
         int gy = y + (18 - GLYPH_SIZE) / 2;   // vertically centered on the 18px tab row
         dev.steampad.client.ui.ButtonIcon.draw(ctx, tr, x, gy, GLYPH_SIZE, "LB");
@@ -50,16 +50,16 @@ public final class SettingsTabs {
 
     private static void addTab(SteamPadBaseScreen screen, int active, int idx, String key,
                                Screen parent, long handle, int x, int y, int w) {
-        ButtonWidget b = ButtonWidget.builder(Text.translatable(key), btn -> {
+        Button b = Button.builder(Component.translatable(key), btn -> {
             if (idx != active) { UiSoundService.playNavigate(); switchTo(idx, parent, handle); }
-        }).dimensions(x, y, w, 18).build();
+        }).bounds(x, y, w, 18).build();
         if (idx == active) b.active = false;
         screen.addDrawableChildPublic(b);
     }
 
     /** Opens the screen for the given tab index, preserving the parent. */
     public static void switchTo(int idx, Screen parent, long handle) {
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         Screen next = switch (idx) {
             case BUTTONS -> new BindingsScreen(parent, handle);
             case ADVANCED -> new ControllerAdvancedSettingsScreen(parent, handle);

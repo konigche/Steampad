@@ -3,16 +3,15 @@ package dev.steampad.screen;
 import dev.steampad.client.ui.SteamSlider;
 import dev.steampad.client.ui.SteamToggle;
 import dev.steampad.service.UiSoundService;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.gui.widget.CyclingButtonWidget;
-import net.minecraft.text.OrderedText;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 
 /**
  * Shared two-column settings layout matching the Buttons screen: a scrollable option list on the left
@@ -32,13 +31,13 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
     protected int listX, listW, panelX, panelW;
     private int cursorY;
 
-    protected record Row(ClickableWidget w, String labelKey, String descKey) {}
+    protected record Row(AbstractWidget w, String labelKey, String descKey) {}
     private final List<Row> rows = new ArrayList<>();
     private final List<int[]> headerPos = new ArrayList<>();
     private final List<String> headerKeys = new ArrayList<>();
     private Row selected;
 
-    protected ColumnSettingsScreen(Text title) { super(title); }
+    protected ColumnSettingsScreen(Component title) { super(title); }
 
     /** Column geometry + reset. Call after super.init(). */
     protected void beginLayout() {
@@ -67,7 +66,7 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
     }
 
     protected void toggle(String key, boolean initial, Consumer<Boolean> onChange) {
-        SteamToggle t = new SteamToggle(listX, cursorY, listW, 20, Text.translatable(key), initial, v -> {
+        SteamToggle t = new SteamToggle(listX, cursorY, listW, 20, Component.translatable(key), initial, v -> {
             UiSoundService.playNavigate();
             onChange.accept(v);
         });
@@ -77,7 +76,7 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
     }
 
     protected void slider(String key, float initial, float min, float max, String fmt, Consumer<Float> onChange) {
-        SteamSlider s = new SteamSlider(listX, cursorY, listW, 20, Text.translatable(key), initial, min, max, fmt, v -> {
+        SteamSlider s = new SteamSlider(listX, cursorY, listW, 20, Component.translatable(key), initial, min, max, fmt, v -> {
             UiSoundService.playNavigate();
             onChange.accept(v);
         });
@@ -94,10 +93,10 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
         // EVERY cycling control in the mod (feedback: "Detalle de glifos en juego: Detalle de glifos en
         // juego: Normal") — confirmed by disassembling CyclingButtonWidget.composeText/
         // composeGenericOptionText with javap -c before touching this.
-        ClickableWidget w = CyclingButtonWidget.<T>builder(v -> localizedEnum(key, v))
-                .values(values)
-                .initially(initial)
-                .build(listX, cursorY, listW, 20, Text.translatable(key),
+        AbstractWidget w = CycleButton.<T>builder(v -> localizedEnum(key, v))
+                .withValues(values)
+                .withInitialValue(initial)
+                .create(listX, cursorY, listW, 20, Component.translatable(key),
                         (btn, v) -> { UiSoundService.playNavigate(); onChange.accept(v); });
         addScroll(w, cursorY);
         rows.add(new Row(w, key, key + ".desc"));
@@ -105,16 +104,16 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
     }
 
     /** Enum value label: tries "<key>.<value>" then falls back to the raw name. */
-    private static Text localizedEnum(String key, Enum<?> v) {
+    private static Component localizedEnum(String key, Enum<?> v) {
         String tk = key + "." + v.name().toLowerCase();
-        String s = Text.translatable(tk).getString();
-        return s.equals(tk) ? Text.literal(v.name()) : Text.literal(s);
+        String s = Component.translatable(tk).getString();
+        return s.equals(tk) ? Component.literal(v.name()) : Component.literal(s);
     }
 
     protected void button(String key, Runnable action) {
-        ClickableWidget w = ButtonWidget.builder(Text.translatable(key),
+        AbstractWidget w = Button.builder(Component.translatable(key),
                         btn -> { UiSoundService.playSelect(); action.run(); })
-                .dimensions(listX, cursorY, listW, 20).build();
+                .bounds(listX, cursorY, listW, 20).build();
         addScroll(w, cursorY);
         rows.add(new Row(w, key, key + ".desc"));
         cursorY += ROW_H;
@@ -128,13 +127,13 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
     }
 
     /** Draws section headers, the scrollbar, and the right description panel. Call from render(). */
-    protected void renderColumns(DrawContext ctx, int mouseX, int mouseY) {
+    protected void renderColumns(GuiGraphics ctx, int mouseX, int mouseY) {
         int top = contentTop(), bottom = contentBottom();
         for (int i = 0; i < headerKeys.size(); i++) {
             int baseY = headerPos.get(i)[0];
             int y = baseY - scrollY();
             if (y >= top - 2 && y + 12 <= bottom + 2) {
-                drawSectionHeader(ctx, listX, y, listW, Text.translatable(headerKeys.get(i)));
+                drawSectionHeader(ctx, listX, y, listW, Component.translatable(headerKeys.get(i)));
             }
         }
         renderScrollbar(ctx, listX + listW + 4);
@@ -147,7 +146,7 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
         for (Row r : rows) if (r.w() == this.getFocused()) { sel = r; break; }
         if (sel == null) {
             for (Row r : rows) {
-                ClickableWidget w = r.w();
+                AbstractWidget w = r.w();
                 if (w.visible && mouseX >= w.getX() && mouseX <= w.getX() + w.getWidth()
                         && mouseY >= w.getY() && mouseY <= w.getY() + w.getHeight()) { sel = r; break; }
             }
@@ -155,24 +154,24 @@ public abstract class ColumnSettingsScreen extends SteamPadBaseScreen {
         if (sel != null) selected = sel;
     }
 
-    private void renderPanel(DrawContext ctx, int top) {
+    private void renderPanel(GuiGraphics ctx, int top) {
         int x = panelX, w = panelW;
         ctx.fill(x, top, x + w, this.height - FOOTER_H - 4, PANEL_BG);
         ctx.fill(x, top, x + w, top + 1, ACCENT_DIM);
         int y = top + 6;
         if (selected == null) {
-            ctx.drawText(textRenderer, Text.translatable("steampad.bind.panel.none"), x + 6, y, TEXT_MUTED, false);
+            ctx.drawString(font, Component.translatable("steampad.bind.panel.none"), x + 6, y, TEXT_MUTED, false);
             return;
         }
-        for (OrderedText l : textRenderer.wrapLines(Text.translatable(selected.labelKey()), w - 12)) {
-            ctx.drawText(textRenderer, l, x + 6, y, TEXT_PRIMARY, false);
+        for (FormattedCharSequence l : font.split(Component.translatable(selected.labelKey()), w - 12)) {
+            ctx.drawString(font, l, x + 6, y, TEXT_PRIMARY, false);
             y += 10;
         }
         y += 4;
-        String descStr = Text.translatable(selected.descKey()).getString();
+        String descStr = Component.translatable(selected.descKey()).getString();
         if (!descStr.equals(selected.descKey())) {   // skip if the .desc key is missing (no raw key shown)
-            for (OrderedText l : textRenderer.wrapLines(Text.literal(descStr), w - 12)) {
-                ctx.drawText(textRenderer, l, x + 6, y, TEXT_MUTED, false);
+            for (FormattedCharSequence l : font.split(Component.literal(descStr), w - 12)) {
+                ctx.drawString(font, l, x + 6, y, TEXT_MUTED, false);
                 y += 10;
             }
         }

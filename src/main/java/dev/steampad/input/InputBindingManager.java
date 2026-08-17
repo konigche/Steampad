@@ -1,5 +1,6 @@
 package dev.steampad.input;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.steampad.config.BindingConfig;
 import dev.steampad.config.ConfigManager;
 import dev.steampad.config.ControllerConfig;
@@ -10,12 +11,10 @@ import dev.steampad.service.ControllerIsolationService;
 import dev.steampad.service.ControllerManager;
 import dev.steampad.steam.SteamInputManager;
 import dev.steampad.util.LogUtil;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-
 import java.util.List;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 
 /**
  * Central dispatcher: reads the active controller's state each tick,
@@ -75,8 +74,8 @@ public final class InputBindingManager {
         BatteryMonitorService.tick();
 
         // Determine context
-        MinecraftClient mc = MinecraftClient.getInstance();
-        Screen currentScreen = mc.currentScreen;
+        Minecraft mc = Minecraft.getInstance();
+        Screen currentScreen = mc.screen;
         boolean hasScreen = currentScreen != null;
         boolean isInGame = !hasScreen && mc.player != null;
 
@@ -94,12 +93,12 @@ public final class InputBindingManager {
 
         // Hold and move state: must be set/cleared every tick regardless of bindings.
         if (ctx.isInGame) {
-            holdKey(mc.options.attackKey, state.isPressed(ControllerState.DigitalAction.ATTACK));
-            holdKey(mc.options.useKey,    state.isPressed(ControllerState.DigitalAction.USE));
+            holdKey(mc.options.keyAttack, state.isPressed(ControllerState.DigitalAction.ATTACK));
+            holdKey(mc.options.keyUse,    state.isPressed(ControllerState.DigitalAction.USE));
         } else {
             // Release held keys and movement when a screen is open or player is absent.
-            holdKey(mc.options.attackKey, false);
-            holdKey(mc.options.useKey,    false);
+            holdKey(mc.options.keyAttack, false);
+            holdKey(mc.options.keyUse,    false);
             ControllerInputState.clear();
         }
 
@@ -116,9 +115,9 @@ public final class InputBindingManager {
         }
     }
 
-    private static void holdKey(KeyBinding key, boolean down) {
+    private static void holdKey(KeyMapping key, boolean down) {
         if (key == null) return;
-        KeyBinding.setKeyPressed(InputUtil.fromTranslationKey(key.getBoundKeyTranslationKey()), down);
+        KeyMapping.set(InputConstants.getKey(key.saveString()), down);
     }
 
     private static void reloadBindings(long handle) {
@@ -135,7 +134,7 @@ public final class InputBindingManager {
         float[] left = DeadzoneProcessor.process(state.leftStick, cfg.leftStickDeadzone);
         float[] right = DeadzoneProcessor.process(state.rightStick, cfg.rightStickDeadzone);
 
-        MinecraftClient mc = MinecraftClient.getInstance();
+        Minecraft mc = Minecraft.getInstance();
 
         if (ctx.isInGame && mc.player != null) {
             // Left stick → analog movement. Steam Input reports Y+ = up (game space), so no Y inversion.
@@ -150,7 +149,7 @@ public final class InputBindingManager {
             float pitch = right[1] * cfg.verticalSensitivity * dev.steampad.config.ControllerConfig.SENSITIVITY_REBASE * 5f;
             if (cfg.invertLookY) pitch = -pitch;
             if (yaw != 0f || pitch != 0f) {
-                mc.player.changeLookDirection(yaw, pitch);
+                mc.player.turn(yaw, pitch);
             }
         }
 

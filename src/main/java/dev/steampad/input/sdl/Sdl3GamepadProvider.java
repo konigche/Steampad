@@ -1,10 +1,10 @@
 package dev.steampad.input.sdl;
 
-import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import dev.steampad.input.GamepadSnapshot;
 import dev.steampad.input.GlfwControllerProvider;
+import dev.steampad.platform.LinuxRuntimeInspector;
 import dev.steampad.steam.SteamControllerHandleRef;
 import dev.steampad.util.LogUtil;
 
@@ -97,18 +97,51 @@ public final class Sdl3GamepadProvider {
         if (initTried) return available;
         initTried = true;
         try {
-            sdl = Native.load("SDL3", Sdl3Native.class);
+            // Multi-location search rather than a bare Native.load("SDL3") — see Sdl3Library for why
+            // the OS default path alone silently loses SDL3 (and with it paddles, rumble and SDL's
+            // device database) on Windows, where nothing puts an SDL3.dll on PATH.
+            sdl = Sdl3Library.load(dev.steampad.config.ConfigManager.getGlobal().sdl3LibraryPath);
+            if (sdl == null) {
+                LogUtil.warn("[SteamPad] libSDL3 not found — falling back to GLFW, which cannot do "
+                        + "rumble or back paddles and knows far fewer controllers.");
+                for (String attempt : Sdl3Library.attempts()) {
+                    LogUtil.warn("[SteamPad]   tried: {}", attempt);
+                }
+                LogUtil.warn("[SteamPad] How to fix: install Steam (its own SDL3 is used automatically), "
+                        + "or install libSDL3 from your package manager, or drop the SDL3 library next to "
+                        + "your .minecraft folder, or set 'sdl3LibraryPath' in config/steampad/global.json "
+                        + "to its absolute path.");
+                return false;
+            }
             // Keep the gamepad alive when the MC window is NOT focused — this is the Controlify
             // behaviour the user wants: clicking on the desktop (or another instance) must NOT freeze
             // or glitch the controller. Must be set BEFORE init. Harmless if the symbol is absent.
             try { sdl.SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1"); } catch (Throwable ignored) {}
-            // Prefer SDL's HIDAPI drivers: they are what expose the back paddles / M1-M2 of pads
-            // like the 8BitDo Ultimate 2 (the evdev mapping doesn't), and drive rumble via hidraw.
-            // Unknown hints are ignored by older SDL builds — safe to set unconditionally.
+            // Prefer SDL's HIDAPI drivers: they are what expose paddles/extra buttons and drive rumble
+            // via the device's real HID report instead of a generic/evdev fallback. The general
+            // SDL_JOYSTICK_HIDAPI hint enables the family, but this project already has one falsifying
+            // data point proving that alone isn't enough to guarantee a SPECIFIC brand's HIDAPI driver
+            // is on (8BitDo needed its own hint set explicitly) — so every brand this mod cares about
+            // gets its hint set explicitly too, rather than trusting the general hint to cascade to all
+            // of them. All of these are safe no-ops on SDL builds that don't recognize a given hint name.
             try {
                 sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI", "1");
                 sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_8BITDO", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_XBOX", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_XBOX_360", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_PS4", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_PS5", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_SWITCH", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_STEAM", "1");
+                sdl.SDL_SetHint("SDL_JOYSTICK_HIDAPI_STEAMDECK", "1");
             } catch (Throwable ignored) {}
+            // On Windows, SDL3 can route Xbox-compatible pads (incl. 3rd-party ones in their XInput
+            // mode, e.g. an 8BitDo switched via Power+B) through either classic XInput or the newer
+            // Windows.Gaming.Input backend. WGI has known compatibility gaps with XInput-clone
+            // devices (misdetection, rumble not reaching the pad) that raw XInput doesn't have —
+            // forcing XInput off WGI is SDL's own documented fix for exactly that symptom pattern.
+            // No-op on non-Windows builds of libSDL3.
+            try { sdl.SDL_SetHint("SDL_JOYSTICK_WGI", "0"); } catch (Throwable ignored) {}
             if (sdl.SDL_Init(Sdl3Native.SDL_INIT_GAMEPAD) == 0) {
                 LogUtil.warn("[SteamPad] SDL3 present but SDL_Init failed: {}", safeError());
                 sdl = null;
@@ -118,12 +151,12 @@ public final class Sdl3GamepadProvider {
             int v = 0;
             try { v = sdl.SDL_GetVersion(); } catch (Throwable ignored) {}
             sdlVersionRaw = v;
-            LogUtil.info("[SteamPad] SDL3 gamepad backend initialized (SDL {}.{}.{}).",
-                    v / 1000000, (v / 1000) % 1000, v % 1000);
+            LogUtil.info("[SteamPad] SDL3 gamepad backend initialized (SDL {}.{}.{}) from {}.",
+                    v / 1000000, (v / 1000) % 1000, v % 1000, Sdl3Library.loadedFrom());
             return true;
         } catch (Throwable t) {
-            // libSDL3 not installed, or symbol mismatch — fall back to GLFW silently-ish.
-            LogUtil.info("[SteamPad] SDL3 not available ({}). Using GLFW fallback instead.",
+            // Symbol mismatch or an SDL that loaded but misbehaved — fall back to GLFW.
+            LogUtil.info("[SteamPad] SDL3 not usable ({}). Using GLFW fallback instead.",
                     t.getClass().getSimpleName());
             sdl = null;
             available = false;
@@ -193,8 +226,10 @@ public final class Sdl3GamepadProvider {
                     String name = gp != null ? safeName(gp) : null;
                     if (name == null || name.isBlank()) name = "Gamepad " + id;
                     result.add(new SteamControllerHandleRef(
-                            handleFor(id), name, GlfwControllerProvider.guessType(name)));
+                            handleFor(id), name, resolveType(gp, name), vendorId(gp), productId(gp),
+                            productVersion(gp), serial(gp)));
                 }
+                closeDisconnected(arr);
             } finally {
                 sdl.SDL_free(ids);
             }
@@ -205,9 +240,85 @@ public final class Sdl3GamepadProvider {
         return result;
     }
 
+    /**
+     * Closes and forgets every gamepad SDL no longer enumerates.
+     *
+     * <p>{@link #openGamepad} caches an {@code SDL_Gamepad*} per instance id and, before this, nothing
+     * ever removed one: a pad that disconnected stayed in the map forever, still counted as "open",
+     * still polled by every {@code SDL_UpdateGamepads}, and still listed in the debug dump's open-pad
+     * table as if it were live. Every unplug/replug cycle in a session added another. SDL's contract is
+     * that the object stays alive until {@code SDL_CloseGamepad}, so this is a straight leak of a
+     * native handle plus per-pump work that grows without bound — and it means a reconnecting pad was
+     * never really re-opened from scratch, only shadowed by a second entry. Pruning here (right after
+     * the authoritative enumeration, which is the only place that knows what disappeared) also
+     * guarantees the next connection genuinely re-opens the device and re-reads its capabilities.
+     */
+    private static void closeDisconnected(int[] presentIds) {
+        if (openGamepads.isEmpty()) return;
+        java.util.Set<Integer> present = new java.util.HashSet<>(presentIds.length * 2);
+        for (int id : presentIds) present.add(id);
+        var it = openGamepads.entrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            if (present.contains(e.getKey())) continue;
+            try { sdl.SDL_CloseGamepad(e.getValue()); } catch (Throwable ignored) { }
+            openPadInfo.remove(e.getKey());
+            extraBtnLoggedHandles.remove(handleFor(e.getKey()));
+            it.remove();
+            LogUtil.info("[SteamPad] SDL3 gamepad closed (id={}) — no longer connected.", e.getKey());
+        }
+    }
+
+    /**
+     * The instance id an open gamepad currently reports, or -1 when SDL can't tell us (old runtime,
+     * missing symbol, throw). -1 means "no opinion" and is deliberately NOT treated as a mismatch.
+     */
+    private static int idOf(Pointer gp) {
+        try {
+            int id = sdl.SDL_GetGamepadID(gp);
+            return id <= 0 ? -1 : id;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** Instance ids whose stale-cache correction has already been logged, so this can't spam. */
+    private static final java.util.Set<Integer> staleLogged = new java.util.HashSet<>();
+
     private static Pointer openGamepad(int instanceId) {
         Pointer gp = openGamepads.get(instanceId);
-        if (gp != null) return gp;
+        if (gp != null) {
+            // Verify the cached object still IS this instance id before trusting anything read from it.
+            //
+            // Why this can't be assumed: SDL3 instance ids are documented as never reused and
+            // monotonically increasing, yet a real two-instance Game Mode log shows that right after
+            // "SDL3 gamepad closed (id=2)" this provider reported id=1 as '8BitDo Ultimate 2 Wireless'
+            // and id=3 as 'Steam Controller (HHD)' — i.e. names, VID/PID and serial attributed to the
+            // WRONG pad. Everything downstream is keyed off exactly those fields: the persistent
+            // identity, the per-pad config file name, and the cross-instance claim key. One bad poll
+            // therefore rewrites which pad owns which configuration AND lets two instances compute the
+            // same claim key for different physical pads — the reported "se pelean los controles" and
+            // "los botones quedan locos" after a pad is switched off and on again.
+            //
+            // Re-opening is cheap (SDL refcounts an already-open gamepad) and only happens on an actual
+            // mismatch. When SDL gives no answer (-1) the cached pointer is used exactly as before, so
+            // a runtime without this symbol keeps the previous behaviour.
+            int actual = idOf(gp);
+            if (actual != -1 && actual != instanceId) {
+                if (staleLogged.add(instanceId)) {
+                    LogUtil.warn("[SteamPad] SDL3 gamepad cached under id={} now reports id={} — dropping "
+                            + "the stale handle and re-opening so its name/VID/PID/serial belong to the "
+                            + "right pad. (This is what mixes up per-pad configs between instances.)",
+                            instanceId, actual);
+                }
+                try { sdl.SDL_CloseGamepad(gp); } catch (Throwable ignored) { }
+                openGamepads.remove(instanceId);
+                openPadInfo.remove(instanceId);
+                gp = null;
+            } else {
+                return gp;
+            }
+        }
         try {
             gp = sdl.SDL_OpenGamepad(instanceId);
             if (gp != null) {
@@ -216,9 +327,15 @@ public final class Sdl3GamepadProvider {
                         || hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1)
                         || hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_LEFT_PADDLE1);
                 boolean rumble = hasRumble(gp);
+                String nm = safeName(gp);
+                int sdlType;
+                try { sdlType = sdl.SDL_GetGamepadType(gp); } catch (Throwable ignored) { sdlType = Sdl3Native.SDL_GAMEPAD_TYPE_UNKNOWN; }
+                SteamControllerHandleRef.ControllerType resolved = resolveType(gp, nm);
+                int vid = vendorId(gp), pid = productId(gp);
+                String conn = connectionState(gp);
                 openPadInfo.put(instanceId, String.format(java.util.Locale.ROOT,
-                        "id=%d '%s' MISC1=%b P1=%b P2=%b P3=%b P4=%b MISC2=%b rumble=%b",
-                        instanceId, safeName(gp),
+                        "id=%d '%s' sdlType=%d resolved=%s vid=0x%04X pid=0x%04X conn=%s MISC1=%b P1=%b P2=%b P3=%b P4=%b MISC2=%b rumble=%b",
+                        instanceId, nm, sdlType, resolved, vid, pid, conn,
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_MISC1),
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1),
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_LEFT_PADDLE1),
@@ -226,9 +343,9 @@ public final class Sdl3GamepadProvider {
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_LEFT_PADDLE2),
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_MISC2),
                         rumble));
-                LogUtil.info("[SteamPad] SDL3 gamepad opened (id={}): '{}'. Extra buttons exposed by "
-                        + "its mapping: MISC1={} P1={} P2={} P3={} P4={} MISC2={} | rumble={}",
-                        instanceId, safeName(gp),
+                LogUtil.info("[SteamPad] SDL3 gamepad opened (id={}): '{}' sdlType={} resolved={} vid=0x{} pid=0x{} "
+                        + "conn={}. Extra buttons exposed by its mapping: MISC1={} P1={} P2={} P3={} P4={} MISC2={} | rumble={}",
+                        instanceId, nm, sdlType, resolved, Integer.toHexString(vid), Integer.toHexString(pid), conn,
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_MISC1),
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1),
                         hasBtn(gp, Sdl3Native.SDL_GAMEPAD_BUTTON_LEFT_PADDLE1),
@@ -239,12 +356,32 @@ public final class Sdl3GamepadProvider {
                 // No paddles AND no rumble = SDL fell back to the generic evdev path instead of its
                 // HIDAPI driver — under Flatpak that means /dev/hidraw* is blocked/unreadable.
                 // Print the fix so the log is self-explanatory (verified on Bazzite + Prism Flatpak).
+                // This diagnosis (evdev/hidraw/udev/Flatpak) is Linux-only vocabulary — printing it on
+                // Windows would be actively wrong, so it's gated; Windows gets its own likely causes.
                 if (!anyExtra && !rumble) {
-                    LogUtil.warn("[SteamPad] This pad was opened WITHOUT SDL's HIDAPI driver — back "
-                            + "paddles/M1 and rumble need it. Fix on the host system:");
-                    LogUtil.warn("[SteamPad]   1) flatpak override --user --device=all org.prismlauncher.PrismLauncher");
-                    LogUtil.warn("[SteamPad]   2) udev rule for hidraw access (vendor 2dc8 = 8BitDo), "
-                            + "then reload udev and replug the dongle. See TODO_BLOCKERS B031.");
+                    if (LinuxRuntimeInspector.isLinux()) {
+                        // Advice has to match the runtime this actually IS. Printing the Flatpak
+                        // override line on a native install (the real case in a user report) sends
+                        // people to a command that does nothing and hides the real cause, which on
+                        // native is plain /dev/hidraw* permissions.
+                        LogUtil.warn("[SteamPad] This pad was opened WITHOUT SDL's HIDAPI driver — back "
+                                + "paddles/M1 and rumble need it. Detected runtime: {}. Fix on the host:",
+                                LinuxRuntimeInspector.containerName());
+                        if (LinuxRuntimeInspector.container() == LinuxRuntimeInspector.Container.FLATPAK) {
+                            LogUtil.warn("[SteamPad]   1) flatpak override --user --device=all org.prismlauncher.PrismLauncher");
+                        }
+                        LogUtil.warn("[SteamPad]   {}) udev rule granting hidraw access to your user "
+                                + "(vendor 2dc8 = 8BitDo), then `sudo udevadm control --reload-rules && "
+                                + "sudo udevadm trigger` and replug the pad. See TODO_BLOCKERS B031.",
+                                LinuxRuntimeInspector.container() == LinuxRuntimeInspector.Container.FLATPAK ? 2 : 1);
+                    } else {
+                        LogUtil.warn("[SteamPad] This pad reports no paddles/M1 and no rumble support. Likely "
+                                + "causes on this platform: the Steam client running in the background with "
+                                + "\"Xbox/Generic Configuration Support\" on (claims the HID device even with "
+                                + "this mod's Steam Input off — close Steam or disable that in Steam's own "
+                                + "Controller settings), or a wireless mode/driver that doesn't expose the "
+                                + "extended HID report (try the pad's other pairing mode, or wired/USB).");
+                    }
                 }
             }
         } catch (Throwable t) {
@@ -261,8 +398,94 @@ public final class Sdl3GamepadProvider {
         try { return sdl.SDL_GamepadHasRumble(gp) != 0; } catch (Throwable t) { return false; }
     }
 
+    /** Uint16 vendor ID as an unsigned int (0 = unknown to SDL), e.g. 0x2DC8 for 8BitDo. */
+    private static int vendorId(Pointer gp) {
+        if (gp == null) return 0;
+        try { return Short.toUnsignedInt(sdl.SDL_GetGamepadVendor(gp)); } catch (Throwable t) { return 0; }
+    }
+
+    private static int productId(Pointer gp) {
+        if (gp == null) return 0;
+        try { return Short.toUnsignedInt(sdl.SDL_GetGamepadProduct(gp)); } catch (Throwable t) { return 0; }
+    }
+
+    private static int productVersion(Pointer gp) {
+        if (gp == null) return 0;
+        try { return Short.toUnsignedInt(sdl.SDL_GetGamepadProductVersion(gp)); } catch (Throwable t) { return 0; }
+    }
+
+    /** Per-unit serial, or "" — see {@link Sdl3Native#SDL_GetGamepadSerial}. Never lets a missing
+     *  symbol on an old libSDL3 escape: identity resolution treats "" as "no extra signal". */
+    private static String serial(Pointer gp) {
+        if (gp == null) return "";
+        try {
+            String s = sdl.SDL_GetGamepadSerial(gp);
+            return s == null ? "" : s.trim();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /** "wired" / "wireless" / "unknown" — the actual link type SDL detected, not a guess. */
+    private static String connectionState(Pointer gp) {
+        if (gp == null) return "unknown";
+        int s;
+        try { s = sdl.SDL_GetGamepadConnectionState(gp); } catch (Throwable t) { return "unknown"; }
+        if (s == Sdl3Native.SDL_JOYSTICK_CONNECTION_WIRED) return "wired";
+        if (s == Sdl3Native.SDL_JOYSTICK_CONNECTION_WIRELESS) return "wireless";
+        return "unknown";
+    }
+
     private static String safeName(Pointer gp) {
         try { return sdl.SDL_GetGamepadName(gp); } catch (Throwable t) { return null; }
+    }
+
+    /**
+     * Controller family for icon/theme selection, preferring SDL's own VID/PID-backed classification
+     * over name-string guessing.
+     *
+     * <p>Root cause this fixes: a pad in an Xbox-compatible mode (e.g. an 8BitDo Ultimate 2 switched
+     * to XInput mode via its 2.4GHz dongle) can report a raw name string that contains neither
+     * "xbox" nor the brand — {@link GlfwControllerProvider#guessType} then falls through to GENERIC
+     * even though the OS itself (and SDL's own device database) knows exactly what it is. SDL has no
+     * dedicated "third-party brand" type, only the console family it's emulating — which is exactly
+     * what matters functionally (button layout / prompt style) and matches what Windows itself
+     * reports for the same pad. UNKNOWN (SDL genuinely doesn't know) falls back to the name
+     * heuristic, which is also the only signal available for Steam Deck / Steam Controller (SDL has
+     * no console-family type for those since they aren't emulating anyone else).
+     *
+     * <p>{@code STANDARD} maps to {@code XBOX}, but only AFTER the name has had its say. SDL's
+     * "standard" IS the Xbox-style face layout (south=A, east=B, west=X, north=Y), so those are the
+     * correct glyphs to draw for it — and it's what the reported 8BitDo Ultimate 2 in its
+     * XInput/Power+B mode actually reports (verified in a real debug dump: {@code sdlType=1}).
+     * Letting the name go first keeps a Steam Deck or a Switch-mode pad that SDL merely calls
+     * "standard" from being mislabelled as Xbox.
+     */
+    private static SteamControllerHandleRef.ControllerType resolveType(Pointer gp, String name) {
+        if (gp != null) {
+            int t;
+            try { t = sdl.SDL_GetGamepadType(gp); } catch (Throwable ignored) { t = Sdl3Native.SDL_GAMEPAD_TYPE_UNKNOWN; }
+            if (t == Sdl3Native.SDL_GAMEPAD_TYPE_XBOX360 || t == Sdl3Native.SDL_GAMEPAD_TYPE_XBOXONE) {
+                return SteamControllerHandleRef.ControllerType.XBOX;
+            }
+            if (t == Sdl3Native.SDL_GAMEPAD_TYPE_PS3 || t == Sdl3Native.SDL_GAMEPAD_TYPE_PS4
+                    || t == Sdl3Native.SDL_GAMEPAD_TYPE_PS5) {
+                return SteamControllerHandleRef.ControllerType.PLAYSTATION;
+            }
+            if (t == Sdl3Native.SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO
+                    || t == Sdl3Native.SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
+                    || t == Sdl3Native.SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT
+                    || t == Sdl3Native.SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR) {
+                return SteamControllerHandleRef.ControllerType.SWITCH;
+            }
+            SteamControllerHandleRef.ControllerType byName = GlfwControllerProvider.guessType(name);
+            if (byName != SteamControllerHandleRef.ControllerType.GENERIC) return byName;
+            if (t == Sdl3Native.SDL_GAMEPAD_TYPE_STANDARD) {
+                return SteamControllerHandleRef.ControllerType.XBOX;
+            }
+            return byName;
+        }
+        return GlfwControllerProvider.guessType(name);
     }
 
     /** Fills {@code out} with the current state of the SDL3 gamepad behind {@code handle}. */
@@ -330,23 +553,46 @@ public final class Sdl3GamepadProvider {
         }
     }
 
-    /** Best-effort rumble. Logs the reason once when the device/driver rejects it (silent F6 bug). */
-    public static void rumble(long handle, float low, float high, int durationMs) {
-        if (!available || sdl == null) return;
+    /** Best-effort rumble. Logs the reason once when the device/driver rejects it (silent F6 bug).
+     *  Returns whether the native call actually reported success — {@code false} covers "no backend",
+     *  "gamepad not open", a thrown exception, AND {@code SDL_RumbleGamepad} itself returning 0
+     *  (rejected by the driver) — the caller (see {@code HapticsController}) surfaces this in its own
+     *  diagnostics so a REPEATED rejection (as opposed to "never even attempted") is visible without
+     *  depending on {@link #rumbleFailLogs}' own 3-line cap, which a single unrelated earlier failure
+     *  could otherwise exhaust before the effect actually worth diagnosing ever fires. */
+    public static boolean rumble(long handle, float low, float high, int durationMs) {
+        if (!available || sdl == null) return false;
         Pointer gp = openGamepad(instanceId(handle));
-        if (gp == null) return;
+        if (gp == null) return false;
         try {
             byte ok = sdl.SDL_RumbleGamepad(gp,
                     (short) (clamp01(low) * 0xFFFF),
                     (short) (clamp01(high) * 0xFFFF),
                     durationMs);
-            if (ok == 0 && rumbleFailLogs++ < 3) {
-                LogUtil.warn("[SteamPad] SDL_RumbleGamepad rejected (hasRumble={}): {} — under Flatpak "
-                        + "this usually means the sandbox blocks force-feedback on the input device.",
-                        hasRumble(gp), safeError());
+            if (ok == 0) {
+                if (rumbleFailLogs++ < 3) {
+                    // Report the REAL detected link (connectionState()) instead of guessing — "wired" vs
+                    // "wireless" here is SDL's own read of the device, not an assumption about which
+                    // pairing mode a proprietary 2.4GHz dongle uses. Do NOT assume a 2.4GHz dongle is
+                    // more wire-like than Bluetooth: both are wireless links and either can legitimately
+                    // not expose rumble in its HID report depending on the pad's firmware.
+                    LogUtil.warn("[SteamPad] SDL_RumbleGamepad rejected (hasRumble={}, link={}): {} — a few "
+                            + "known causes, cheapest to check first: (1) Steam client running in the "
+                            + "background with its own \"Xbox/Generic Configuration Support\" still on can "
+                            + "claim the HID device exclusively even with this mod's own Steam Input feature "
+                            + "off — close Steam or disable that in Steam's own Controller settings and "
+                            + "retry; (2) under Flatpak the sandbox can block force-feedback on the input "
+                            + "device; (3) some pads genuinely don't expose rumble over ANY wireless link "
+                            + "(Bluetooth or a 2.4GHz dongle alike) in some firmwares — a wired/USB "
+                            + "connection is the only one that reliably rules this out.",
+                            hasRumble(gp), connectionState(gp), safeError());
+                }
+                return false;
             }
+            return true;
         } catch (Throwable t) {
             if (rumbleFailLogs++ < 3) LogUtil.warn("[SteamPad] SDL_RumbleGamepad threw: {}", t.toString());
+            return false;
         }
     }
 

@@ -1,10 +1,10 @@
 package dev.steampad.client.ui;
 
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import dev.steampad.compat.mc.RenderCompat;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * Monochrome, console-style controller button icons for the configuration screen — black shapes with
@@ -45,12 +45,12 @@ public final class ButtonIcon {
     }
 
     /** Width consumed by the icon for {@code id} at the given size. */
-    public static int width(TextRenderer tr, int size, String id) {
+    public static int width(Font tr, int size, String id) {
         if (id == null || id.isEmpty()) return size;
         // Brand PNGs are square, so they consume exactly {@code size}; only the vector fallback widens.
         if (ButtonTextureManager.resolveButton(id) != null) return size;
         return switch (id) {
-            case "LB", "RB", "LT", "RT", "START", "BACK" -> Math.max(size + 8, tr.getWidth(id) + 10);
+            case "LB", "RB", "LT", "RT", "START", "BACK" -> Math.max(size + 8, tr.width(id) + 10);
             default -> size;
         };
     }
@@ -74,7 +74,7 @@ public final class ButtonIcon {
      * known ahead of the draw, so a safe rectangle tint isn't possible without the same leak risk).
      * The Y-nudge never changes the returned width, so pressing a button can never shift layout.
      */
-    public static int draw(DrawContext ctx, TextRenderer tr, int x, int y, int size, String id) {
+    public static int draw(GuiGraphics ctx, Font tr, int x, int y, int size, String id) {
         if (id == null || id.isEmpty()) { drawEmpty(ctx, x, y, size); return size; }
         boolean pressed = dev.steampad.input.GamepadInputDispatcher.isPhysicallyHeld(id);
         int dy = pressed ? y + 1 : y;
@@ -82,12 +82,11 @@ public final class ButtonIcon {
     }
 
     /** The actual icon drawing (brand PNG or vector fallback). */
-    private static int drawGlyph(DrawContext ctx, TextRenderer tr, int x, int y, int size, String id, boolean pressed) {
+    private static int drawGlyph(GuiGraphics ctx, Font tr, int x, int y, int size, String id, boolean pressed) {
         // Prefer the connected controller's brand PNG; fall back to the vector glyphs below.
-        Identifier tex = ButtonTextureManager.resolveButton(id);
+        ResourceLocation tex = ButtonTextureManager.resolveButton(id);
         if (tex != null) {
-            ctx.drawTexture(RenderPipelines.GUI_TEXTURED, tex, x, y, 0f, 0f, size, size,
-                    ButtonTextureManager.TEX, ButtonTextureManager.TEX,
+            RenderCompat.blitTextureTinted(ctx, tex, x, y, size, size,
                     ButtonTextureManager.TEX, ButtonTextureManager.TEX,
                     pressed ? TINT_PRESSED : TINT_NORMAL);
             return size;
@@ -114,7 +113,7 @@ public final class ButtonIcon {
         }
     }
 
-    private static void drawEmpty(DrawContext ctx, int x, int y, int size) {
+    private static void drawEmpty(GuiGraphics ctx, int x, int y, int size) {
         // Hollow rounded square = "no button assigned".
         Draw.fillRoundRect(ctx, x, y, x + size, y + size, 3, 0x33000000);
         int t = 1;
@@ -124,32 +123,32 @@ public final class ButtonIcon {
         ctx.fill(x + size - t, y, x + size, y + size, EMPTY);
     }
 
-    private static void drawDisc(DrawContext ctx, TextRenderer tr, int x, int y, int size, String letter) {
+    private static void drawDisc(GuiGraphics ctx, Font tr, int x, int y, int size, String letter) {
         int cx = x + size / 2, cy = y + size / 2, r = size / 2 - 1;
         Draw.fillCircle(ctx, cx, cy, r, FILL);
         Draw.outlineCircle(ctx, cx, cy, r, 1, EDGE);
-        int tw = tr.getWidth(letter);
-        ctx.drawText(tr, Text.literal(letter), cx - tw / 2, cy - 3, EDGE, false);
+        int tw = tr.width(letter);
+        ctx.drawString(tr, Component.literal(letter), cx - tw / 2, cy - 3, EDGE, false);
     }
 
     /** Stick = outer ring + inner disc with L/R letter; an arrow when a direction is given. */
-    private static void drawStick(DrawContext ctx, TextRenderer tr, int x, int y, int size, String lr, int dx, int dy) {
+    private static void drawStick(GuiGraphics ctx, Font tr, int x, int y, int size, String lr, int dx, int dy) {
         int cx = x + size / 2, cy = y + size / 2, r = size / 2 - 1;
         Draw.fillCircle(ctx, cx, cy, r, FILL);
         Draw.outlineCircle(ctx, cx, cy, r, 1, EDGE);
         Draw.outlineCircle(ctx, cx, cy, r - 3, 1, 0x66E9EEF4);   // inner hub ring
         if (dx == 0 && dy == 0) {
-            int tw = tr.getWidth(lr);
-            ctx.drawText(tr, Text.literal(lr), cx - tw / 2, cy - 3, EDGE, false);
+            int tw = tr.width(lr);
+            ctx.drawString(tr, Component.literal(lr), cx - tw / 2, cy - 3, EDGE, false);
         } else {
             arrow(ctx, cx, cy, Math.max(3, r - 2), dx, dy);
             // tiny L/R hint in the corner
-            ctx.drawText(tr, Text.literal(lr), x + 1, y + size - 8, 0xAAE9EEF4, false);
+            ctx.drawString(tr, Component.literal(lr), x + 1, y + size - 8, 0xAAE9EEF4, false);
         }
     }
 
     /** D-pad cross with the active arm lit white. */
-    private static void drawDpad(DrawContext ctx, int x, int y, int size, int dx, int dy) {
+    private static void drawDpad(GuiGraphics ctx, int x, int y, int size, int dx, int dy) {
         int cx = x + size / 2, cy = y + size / 2;
         int arm = size / 2 - 1, w = Math.max(2, size / 5);
         // base cross (dark)
@@ -162,28 +161,28 @@ public final class ButtonIcon {
         if (dx > 0) ctx.fill(cx, cy - w, cx + arm, cy + w, EDGE);
     }
 
-    private static int drawTrigger(DrawContext ctx, TextRenderer tr, int x, int y, int size, String label) {
-        int w = Math.max(size + 8, tr.getWidth(label) + 10);
+    private static int drawTrigger(GuiGraphics ctx, Font tr, int x, int y, int size, String label) {
+        int w = Math.max(size + 8, tr.width(label) + 10);
         // trigger = pill with a rounded top (suggesting a lever)
         Draw.fillRoundRect(ctx, x, y + 2, x + w, y + size, 3, FILL);
         Draw.fillRoundRect(ctx, x + 3, y, x + w - 3, y + 5, 2, FILL);
         outline(ctx, x, y + 2, x + w, y + size, EDGE);
-        int tw = tr.getWidth(label);
-        ctx.drawText(tr, Text.literal(label), x + (w - tw) / 2, y + (size - 8) / 2 + 1, EDGE, false);
+        int tw = tr.width(label);
+        ctx.drawString(tr, Component.literal(label), x + (w - tw) / 2, y + (size - 8) / 2 + 1, EDGE, false);
         return w;
     }
 
-    private static int drawPill(DrawContext ctx, TextRenderer tr, int x, int y, int size, String label) {
-        int w = Math.max(size + 8, tr.getWidth(label) + 10);
+    private static int drawPill(GuiGraphics ctx, Font tr, int x, int y, int size, String label) {
+        int w = Math.max(size + 8, tr.width(label) + 10);
         Draw.fillRoundRect(ctx, x, y, x + w, y + size, size / 2, FILL);
-        int tw = tr.getWidth(label);
-        ctx.drawText(tr, Text.literal(label), x + (w - tw) / 2, y + (size - 8) / 2, EDGE, false);
+        int tw = tr.width(label);
+        ctx.drawString(tr, Component.literal(label), x + (w - tw) / 2, y + (size - 8) / 2, EDGE, false);
         // subtle top highlight
         ctx.fill(x + 4, y + 1, x + w - 4, y + 2, 0x55E9EEF4);
         return w;
     }
 
-    private static void outline(DrawContext ctx, int x1, int y1, int x2, int y2, int c) {
+    private static void outline(GuiGraphics ctx, int x1, int y1, int x2, int y2, int c) {
         ctx.fill(x1, y1, x2, y1 + 1, c);
         ctx.fill(x1, y2 - 1, x2, y2, c);
         ctx.fill(x1, y1, x1 + 1, y2, c);
@@ -191,7 +190,7 @@ public final class ButtonIcon {
     }
 
     /** A filled directional triangle centered at (cx,cy). */
-    private static void arrow(DrawContext ctx, int cx, int cy, int r, int dx, int dy) {
+    private static void arrow(GuiGraphics ctx, int cx, int cy, int r, int dx, int dy) {
         for (int i = 0; i <= r; i++) {
             int half = (r - i);
             if (dy < 0)      ctx.fill(cx - half, cy - r + i, cx + half + 1, cy - r + i + 1, EDGE);

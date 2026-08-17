@@ -1,12 +1,20 @@
+// SteamPad Steam Input action manifest.
+//
+// major_revision MUST be bumped whenever the structure below changes (action sets added/renamed, a
+// configurations block added, ...). Steam caches the layout it built for a title against the manifest
+// revision it last saw: with an unchanged number it keeps serving the user's existing template and
+// silently ignores everything new here — which is exactly how a correctly-deployed configurations
+// block still showed up in Steam as the stock Gamepad template with nothing bound.
+//   3 -> 4 : v0.81.0, first revision to ship the "configurations" block + generated default bindings.
 "In Game Actions"
 {
-	"major_revision"	"3"
+	"major_revision"	"4"
 	"minor_revision"	"0"
 	"actions"
 	{
 		"SteamPad_Gameplay"
 		{
-			"title"		"#SteamPad_Gameplay"
+			"title"		"#SteamPad_Set_Gameplay"
 			"StickPadGyro"
 			{
 				"steampad_left_stick"
@@ -58,7 +66,7 @@
 		}
 		"SteamPad_Menu"
 		{
-			"title"		"#SteamPad_Menu"
+			"title"		"#SteamPad_Set_Menu"
 			"StickPadGyro"
 			{
 				"steampad_vmouse"
@@ -90,6 +98,10 @@
 				"steampad_cycle_forward"	{ "title" "#steampad_cycle_forward" }
 				"steampad_cycle_backward"	{ "title" "#steampad_cycle_backward" }
 				"steampad_toggle_vmouse"	{ "title" "#steampad_toggle_vmouse" }
+				"steampad_radial_nav_up"	{ "title" "#steampad_radial_nav_up" }
+				"steampad_radial_nav_down"	{ "title" "#steampad_radial_nav_down" }
+				"steampad_radial_nav_left"	{ "title" "#steampad_radial_nav_left" }
+				"steampad_radial_nav_right"	{ "title" "#steampad_radial_nav_right" }
 				"steampad_slot_1"		{ "title" "#steampad_slot_1" }
 				"steampad_slot_2"		{ "title" "#steampad_slot_2" }
 				"steampad_slot_3"		{ "title" "#steampad_slot_3" }
@@ -104,7 +116,7 @@
 		}
 		"SteamPad_Inventory"
 		{
-			"title"		"#SteamPad_Inventory"
+			"title"		"#SteamPad_Set_Inventory"
 			"StickPadGyro"
 			{
 				"steampad_vmouse"
@@ -149,7 +161,7 @@
 		}
 		"SteamPad_Mounted"
 		{
-			"title"		"#SteamPad_Mounted"
+			"title"		"#SteamPad_Set_Mounted"
 			"StickPadGyro"
 			{
 				"steampad_left_stick"
@@ -192,10 +204,10 @@
 	{
 		"english"
 		{
-			"SteamPad_Gameplay"		"SteamPad — Gameplay"
-			"SteamPad_Menu"			"SteamPad — Menu"
-			"SteamPad_Inventory"		"SteamPad — Inventory"
-			"SteamPad_Mounted"		"SteamPad — Mounted"
+			"SteamPad_Set_Gameplay"		"SteamPad — Gameplay"
+			"SteamPad_Set_Menu"		"SteamPad — Menu"
+			"SteamPad_Set_Inventory"	"SteamPad — Inventory"
+			"SteamPad_Set_Mounted"		"SteamPad — Mounted"
 			"steampad_left_stick"		"Left Joystick — Move"
 			"steampad_right_stick"		"Right Joystick — Camera"
 			"steampad_vmouse"		"Virtual Mouse Cursor"
@@ -242,13 +254,17 @@
 			"steampad_cycle_forward"	"Cycle Forward"
 			"steampad_cycle_backward"	"Cycle Backward"
 			"steampad_toggle_vmouse"	"Toggle Virtual Mouse"
+			"steampad_radial_nav_up"	"Radial — Select Up"
+			"steampad_radial_nav_down"	"Radial — Select Down"
+			"steampad_radial_nav_left"	"Radial — Select Left"
+			"steampad_radial_nav_right"	"Radial — Select Right"
 		}
 		"spanish"
 		{
-			"SteamPad_Gameplay"		"SteamPad — Jugabilidad"
-			"SteamPad_Menu"			"SteamPad — Menú"
-			"SteamPad_Inventory"		"SteamPad — Inventario"
-			"SteamPad_Mounted"		"SteamPad — Montado"
+			"SteamPad_Set_Gameplay"		"SteamPad — Jugabilidad"
+			"SteamPad_Set_Menu"		"SteamPad — Menú"
+			"SteamPad_Set_Inventory"	"SteamPad — Inventario"
+			"SteamPad_Set_Mounted"		"SteamPad — Montado"
 			"steampad_left_stick"		"Joystick izquierdo — Mover"
 			"steampad_right_stick"		"Joystick derecho — Cámara"
 			"steampad_vmouse"		"Cursor de ratón virtual"
@@ -295,13 +311,17 @@
 			"steampad_cycle_forward"	"Ciclo adelante"
 			"steampad_cycle_backward"	"Ciclo atrás"
 			"steampad_toggle_vmouse"	"Alternar ratón virtual"
+			"steampad_radial_nav_up"	"Radial — Seleccionar arriba"
+			"steampad_radial_nav_down"	"Radial — Seleccionar abajo"
+			"steampad_radial_nav_left"	"Radial — Seleccionar izquierda"
+			"steampad_radial_nav_right"	"Radial — Seleccionar derecha"
 		}
 		"latam"
 		{
-			"SteamPad_Gameplay"		"SteamPad — Jugabilidad"
-			"SteamPad_Menu"			"SteamPad — Menú"
-			"SteamPad_Inventory"		"SteamPad — Inventario"
-			"SteamPad_Mounted"		"SteamPad — Montado"
+			"SteamPad_Set_Gameplay"		"SteamPad — Jugabilidad"
+			"SteamPad_Set_Menu"		"SteamPad — Menú"
+			"SteamPad_Set_Inventory"	"SteamPad — Inventario"
+			"SteamPad_Set_Mounted"		"SteamPad — Montado"
 			"steampad_left_stick"		"Joystick izquierdo — Mover"
 			"steampad_right_stick"		"Joystick derecho — Cámara"
 			"steampad_vmouse"		"Cursor de mouse virtual"
@@ -348,6 +368,41 @@
 			"steampad_cycle_forward"	"Ciclo adelante"
 			"steampad_cycle_backward"	"Ciclo atrás"
 			"steampad_toggle_vmouse"	"Alternar mouse virtual"
+			"steampad_radial_nav_up"	"Radial — Seleccionar arriba"
+			"steampad_radial_nav_down"	"Radial — Seleccionar abajo"
+			"steampad_radial_nav_left"	"Radial — Seleccionar izquierda"
+			"steampad_radial_nav_right"	"Radial — Seleccionar derecha"
+		}
+	}
+	"configurations"
+	{
+		"controller_generic"
+		{
+			"0"
+			{
+				"path"		"steampad_controller_generic.vdf"
+			}
+		}
+		"controller_xbox360"
+		{
+			"0"
+			{
+				"path"		"steampad_controller_xbox360.vdf"
+			}
+		}
+		"controller_xboxone"
+		{
+			"0"
+			{
+				"path"		"steampad_controller_xboxone.vdf"
+			}
+		}
+		"controller_neptune"
+		{
+			"0"
+			{
+				"path"		"steampad_controller_neptune.vdf"
+			}
 		}
 	}
 }

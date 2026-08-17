@@ -146,35 +146,37 @@ public final class EmoteCraftBinaryParser {
                     description == null ? "" : description,
                     anim.isInfinite, anim.beginTick, anim.endTick, anim.stopTick, anim.returnToTick);
             data.easingBefore = anim.isEasingBefore;
+            data.usesBend = anim.hasBendData;
 
             int applied = 0;
-            // "body" before "torso": normally a no-op (torso only ever carries bend, which isn't
-            // read here) — but see the class doc's collision note. Processing body first means it
-            // always wins the rare file where torso ALSO carries real transform data.
+            // Since D110, "body" and "torso" map to DIFFERENT parts (whole-model transform vs. the
+            // body bone), so they can no longer collide with each other — the old body-before-torso
+            // ordering that existed to arbitrate that merge is gone. A file declaring real data on
+            // both (e.g. "Friendship Round Dance") is now simply honored on both channels, which is
+            // what the reference does too. The guard below stays purely as defense against a
+            // malformed file declaring the same axis twice within one part.
             List<String> sourceNames = new ArrayList<>(anim.parts.keySet());
-            sourceNames.sort(Comparator.comparingInt(n -> "torso".equals(n) ? 1 : 0));
             for (String sourceName : sourceNames) {
                 EmoteData.Part part = partFor(sourceName);
                 if (part == null) continue;   // leftItem/rightItem/cape/unknown — out of render scope
-                AxisData[] axes = anim.parts.get(sourceName);
+                PartAxes partAxes = anim.parts.get(sourceName);
+                AxisData[] axes = partAxes.base();
                 for (int a = 0; a < BASE_AXES.length; a++) {
                     AxisData ax = axes[a];
                     if (ax == null || !ax.enabled) continue;
                     if (data.hasChannel(part, BASE_AXES[a])) {
-                        // A DIFFERENT source part already claimed this axis on the shared TORSO part
-                        // (body+torso merge) — a genuine collision, not the normal "disabled empty
-                        // axis" case (see class doc: "Friendship Round Dance" has REAL transform data
-                        // on BOTH "body" and "torso"). Interleaving both would corrupt the channel
-                        // (two authors' keyframe tracks on one axis) — first writer (by the body-first
-                        // order above) wins; log once so a future report has direct evidence.
-                        LogUtil.warn("[SteamPad] .emotecraft '{}': part '{}' also declares {}.{} — "
-                                        + "already claimed by an earlier part this axis merges with; "
-                                        + "its {} keyframe(s) were skipped to avoid corrupting the channel.",
+                        // Defensive only, and no longer expected to fire in practice: since D110 no
+                        // two source names map to the same Part, so reaching here means one malformed
+                        // file declared the same axis twice within a single part. Interleaving two
+                        // keyframe tracks on one axis would corrupt it — first writer wins, logged so
+                        // a real occurrence shows up as evidence rather than silently.
+                        LogUtil.warn("[SteamPad] .emotecraft '{}': part '{}' declares {}.{} more than "
+                                        + "once; its {} extra keyframe(s) were skipped to avoid "
+                                        + "corrupting the channel.",
                                 id, sourceName, part, BASE_AXES[a], ax.frames.size());
                         continue;
                     }
-                    // Merge-friendly: only ever turn an axis ON (body+torso share TORSO — torso's
-                    // disabled x/y/z must not clobber body's enabled ones).
+                    // Only ever turn an axis ON — a disabled axis must never clobber an enabled one.
                     data.setAxisEnabled(part, BASE_AXES[a], true);
                     for (AxisKf kf : ax.frames) {
                         data.addKeyframe(part, BASE_AXES[a], kf.tick, kf.value,
@@ -182,6 +184,11 @@ public final class EmoteCraftBinaryParser {
                         applied++;
                     }
                 }
+                // Bend (v0.63.0/D103) — same merge-friendly "only ever turn on" rule as the base axes,
+                // same body-before-torso collision protection (a source part's bend never overwrites
+                // an already-claimed bend channel on the shared TORSO part).
+                applied += mergeBendAxis(data, part, partAxes.bendDir(), EmoteData.Axis.BEND_DIRECTION, id, sourceName);
+                applied += mergeBendAxis(data, part, partAxes.bend(), EmoteData.Axis.BEND_AMOUNT, id, sourceName);
             }
             LogUtil.info("[SteamPad] Parsed .emotecraft '{}' (binary v{}): '{}' by '{}', ticks {}..{}/{}, "
                             + "loop={} return={}, {} keyframes across {} parts.",
@@ -203,12 +210,19 @@ public final class EmoteCraftBinaryParser {
         final List<AxisKf> frames = new ArrayList<>();
     }
 
+    /** One part's full axis set: the 6 base (x/y/z/pitch/yaw/roll, always present) plus bendDir/bend
+     *  (v0.63.0/D103, only non-null when the part is bendable — rendered now, see
+     *  {@link dev.steampad.emote.bend.CuboidBender}, previously parsed only to keep the cursor aligned
+     *  then discarded). */
+    private record PartAxes(AxisData[] base, AxisData bendDir, AxisData bend) {}
+
     private static final class Anim {
         int version;
         int beginTick, endTick, stopTick, returnToTick;
         boolean isInfinite, isEasingBefore;
         int keyframeSize;
-        final Map<String, AxisData[]> parts = new LinkedHashMap<>();
+        boolean hasBendData;
+        final Map<String, PartAxes> parts = new LinkedHashMap<>();
     }
 
     private static final EmoteData.Axis[] BASE_AXES = {
@@ -265,21 +279,53 @@ public final class EmoteCraftBinaryParser {
         return anim;
     }
 
-    /** One part: the 6 base axes (kept), then bendDir+bend if bendable and scaleX/Y/Z if v3+ —
-     *  parsed only to advance the cursor correctly (out of render scope). */
-    private static AxisData[] readPart(ByteBuffer buf, Anim anim, boolean bendable, boolean scalable, int end) {
+    /** One part: the 6 base axes (kept), then bendDir+bend if bendable and scaleX/Y/Z if v3+ — the
+     *  bend pair is parsed to advance the cursor correctly AND checked for real data (see
+     *  {@link EmoteData#usesBend}); it is still not rendered (out of render scope, no cuboid-split
+     *  renderer here). */
+    private static PartAxes readPart(ByteBuffer buf, Anim anim, boolean bendable, boolean scalable, int end) {
         AxisData[] axes = new AxisData[BASE_AXES.length];
         for (int a = 0; a < BASE_AXES.length; a++) axes[a] = readAxis(buf, anim, end);
+        AxisData bendDir = null, bend = null;
         if (bendable) {
-            readAxis(buf, anim, end);               // bendDir
-            readAxis(buf, anim, end);               // bend
+            bendDir = readAxis(buf, anim, end);
+            bend = readAxis(buf, anim, end);
+            if (hasRealData(bendDir) || hasRealData(bend)) anim.hasBendData = true;
         }
         if (scalable && anim.version >= 3) {
             readAxis(buf, anim, end);               // scaleX
             readAxis(buf, anim, end);               // scaleY
             readAxis(buf, anim, end);               // scaleZ
         }
-        return axes;
+        return new PartAxes(axes, bendDir, bend);
+    }
+
+    /** Merges one bend axis (bendDir or bend) into {@code data}, honoring the same "only ever turn an
+     *  axis on" / body-wins-on-collision rules {@code parse()} already applies to the base 6 axes —
+     *  extracted here since bend needed the exact same treatment twice (direction + amount). Returns
+     *  the number of keyframes actually applied (0 if absent/disabled/already claimed). */
+    private static int mergeBendAxis(EmoteData data, EmoteData.Part part, AxisData ax,
+                                     EmoteData.Axis axis, String id, String sourceName) {
+        if (ax == null || !ax.enabled) return 0;
+        if (data.hasChannel(part, axis)) {
+            LogUtil.warn("[SteamPad] .emotecraft '{}': part '{}' also declares {}.{} — already claimed "
+                            + "by an earlier part this axis merges with; its {} keyframe(s) were skipped.",
+                    id, sourceName, part, axis, ax.frames.size());
+            return 0;
+        }
+        data.setAxisEnabled(part, axis, true);
+        for (AxisKf kf : ax.frames) {
+            data.addKeyframe(part, axis, kf.tick, kf.value, Easing.fromId(kf.ease), kf.easingArg);
+        }
+        return ax.frames.size();
+    }
+
+    /** An axis "really" carries bend data when it's enabled AND has at least one keyframe — an
+     *  enabled-but-empty axis (some writers set the flag without ever authoring a value) isn't a
+     *  meaningful bend, same "enabled with zero keyframes still means something" nuance the base
+     *  axes already handle, but bend specifically needs actual authored motion to matter visually. */
+    private static boolean hasRealData(AxisData axis) {
+        return axis != null && axis.enabled && !axis.frames.isEmpty();
     }
 
     private static AxisData readAxis(ByteBuffer buf, Anim anim, int end) {
@@ -324,7 +370,13 @@ public final class EmoteCraftBinaryParser {
     private static EmoteData.Part partFor(String name) {
         return switch (name) {
             case "head" -> EmoteData.Part.HEAD;
-            case "body", "torso" -> EmoteData.Part.TORSO;   // merged — see class doc
+            // NOT synonyms (D110): "body" is the WHOLE-MODEL transform (v1's fixed part order puts it
+            // second, and the reference reads it into AnimationBuilder.body, consumed by its
+            // PlayerRendererMixin as a matrix-stack transform — that is what physically drops a
+            // sitting player to the floor); "torso" is the body BONE. Merging them was why sitting
+            // emotes floated.
+            case "body" -> EmoteData.Part.BODY;
+            case "torso" -> EmoteData.Part.TORSO;
             case "rightArm" -> EmoteData.Part.RIGHT_ARM;
             case "leftArm" -> EmoteData.Part.LEFT_ARM;
             case "rightLeg" -> EmoteData.Part.RIGHT_LEG;
